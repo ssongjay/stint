@@ -23,6 +23,7 @@ import androidx.window.layout.WindowInfoTracker
 import androidx.window.layout.WindowMetricsCalculator
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.ConnectionStatus
+import dev.stint.shared.TimerClockStyle
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicReference
@@ -87,6 +88,59 @@ class FoldableAcceptanceTest {
         assertEquals("Session identities must be unique", sessions.size, sessions.map { it.id }.toSet().size)
         assertPhysicalLayout(launched, expectedLayout)
         writePrivateWindowScreenshot(launched, shotName)
+    }
+
+    @Test
+    fun localClockStyleRendersAndPersistsWithoutChangingServerSnapshot() {
+        val expectedLayout = argument("expectedLayout", "ordinary")
+        val shotName = safeFileName(argument("screenshotName", expectedLayout))
+        val requestedStyle = TimerClockStyle.valueOf(argument("clockStyle", TimerClockStyle.ORBIT.name))
+        val launched = ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
+        var activeViewModel = viewModel(launched)
+        val before = runBlocking {
+            withTimeout(20_000) {
+                activeViewModel.controller.state.first { it.connection == ConnectionStatus.CONNECTED }
+            }
+        }
+        val beforeSnapshot = requireNotNull(before.snapshot)
+        val originalStyle = before.clockStyle
+        try {
+            activeViewModel.controller.setClockStyle(requestedStyle)
+            val styled = runBlocking {
+                withTimeout(5_000) {
+                    activeViewModel.controller.state.first { it.clockStyle == requestedStyle }
+                }
+            }
+            assertEquals(requestedStyle, AndroidLocalStore(context).loadClockStyle())
+            assertEquals("Clock style must not advance server revision",
+                beforeSnapshot.revision, styled.snapshot?.revision)
+            assertEquals("Clock style must not replace the active timer",
+                beforeSnapshot.timer.id, styled.snapshot?.timer?.id)
+            assertEquals("Clock style must not add or remove sessions",
+                beforeSnapshot.sessions.map { it.id }, styled.snapshot?.sessions?.map { it.id })
+
+            // A fresh Activity/controller proves the local preference is durable and
+            // gives the selected visual a complete initial composition before capture.
+            launched.close()
+            scenario = null
+            val relaunched = ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
+            activeViewModel = viewModel(relaunched)
+            val restored = runBlocking {
+                withTimeout(20_000) {
+                    activeViewModel.controller.state.first {
+                        it.connection == ConnectionStatus.CONNECTED && it.clockStyle == requestedStyle
+                    }
+                }
+            }
+            assertEquals(beforeSnapshot.revision, restored.snapshot?.revision)
+            assertEquals(beforeSnapshot.timer.id, restored.snapshot?.timer?.id)
+            assertEquals(beforeSnapshot.sessions.map { it.id }, restored.snapshot?.sessions?.map { it.id })
+            assertPhysicalLayout(relaunched, expectedLayout)
+            writePrivateWindowScreenshot(relaunched, shotName)
+        } finally {
+            activeViewModel.controller.setClockStyle(originalStyle)
+            assertEquals(originalStyle, AndroidLocalStore(context).loadClockStyle())
+        }
     }
 
     @Test

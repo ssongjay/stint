@@ -8,6 +8,7 @@ import dev.stint.shared.Snapshot
 import dev.stint.shared.Subject
 import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
+import dev.stint.shared.TimerClockStyle
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -318,6 +319,92 @@ class StintControllerTest {
         controller.close()
     }
 
+    @Test
+    fun `clock style defaults locally and loads a persisted choice without network`() {
+        var networkRequests = 0
+        val blankSettings = ConnectionSettings(deviceId = "device", deviceName = "test")
+        val defaultController = StintController(
+            client = client { networkRequests += 1; error("clock preference must not use network") },
+            localStore = FakeStore(blankSettings, null),
+            clock = { 1_000L },
+            newId = { "id" },
+            realtimeEnabled = false,
+        )
+        assertEquals(TimerClockStyle.ORBIT, defaultController.state.value.clockStyle)
+        defaultController.close()
+
+        val persistedController = StintController(
+            client = client { networkRequests += 1; error("clock preference must not use network") },
+            localStore = FakeStore(blankSettings, null, TimerClockStyle.HOURGLASS),
+            clock = { 1_000L },
+            newId = { "id" },
+            realtimeEnabled = false,
+        )
+        assertEquals(TimerClockStyle.HOURGLASS, persistedController.state.value.clockStyle)
+        assertEquals(0, networkRequests)
+        persistedController.close()
+    }
+
+    @Test
+    fun `clock style changes locally survives restart and preserves timer snapshot`() = runBlocking {
+        var networkRequests = 0
+        val currentSnapshot = snapshot(1_000L, 7, TimerStatus.RUNNING)
+        val store = FakeStore(settings(), currentSnapshot)
+        val first = StintController(
+            client = client { networkRequests += 1; jsonResponse(currentSnapshot) },
+            localStore = store,
+            clock = { 1_000L },
+            newId = { "id" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { first.state.first { it.connection == ConnectionStatus.CONNECTED } }
+        val before = first.state.value.snapshot
+        val requestsBeforePreferenceChange = networkRequests
+
+        first.setClockStyle(TimerClockStyle.HOURGLASS)
+
+        assertEquals(TimerClockStyle.HOURGLASS, first.state.value.clockStyle)
+        assertEquals(before, first.state.value.snapshot)
+        assertEquals(requestsBeforePreferenceChange, networkRequests)
+        first.close()
+
+        val restored = StintController(
+            client = client { networkRequests += 1; jsonResponse(currentSnapshot) },
+            localStore = store,
+            clock = { 1_000L },
+            newId = { "id" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { restored.state.first { it.connection == ConnectionStatus.CONNECTED } }
+        assertEquals(TimerClockStyle.HOURGLASS, restored.state.value.clockStyle)
+        assertEquals(before, restored.state.value.snapshot)
+        assertEquals(requestsBeforePreferenceChange + 1, networkRequests)
+        restored.close()
+    }
+
+    @Test
+    fun `clock style storage failure retains the prior style and reports a local error`() {
+        val store = FakeStore(
+            ConnectionSettings(deviceId = "device", deviceName = "test"),
+            null,
+            TimerClockStyle.ORBIT,
+        ).apply { failClockSave = true }
+        val controller = StintController(
+            client = client { error("clock preference must not use network") },
+            localStore = store,
+            clock = { 1_000L },
+            newId = { "id" },
+            realtimeEnabled = false,
+        )
+
+        controller.setClockStyle(TimerClockStyle.HOURGLASS)
+
+        assertEquals(TimerClockStyle.ORBIT, controller.state.value.clockStyle)
+        assertEquals(TimerClockStyle.ORBIT, store.loadClockStyle())
+        assertTrue(controller.state.value.message.orEmpty().contains("시계 모양"))
+        controller.close()
+    }
+
     private fun client(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): HttpClient =
         HttpClient(MockEngine(handler)) {
             expectSuccess = false
@@ -356,12 +443,15 @@ class StintControllerTest {
     private class FakeStore(
         initialSettings: ConnectionSettings,
         initialSnapshot: Snapshot?,
+        initialClockStyle: TimerClockStyle = TimerClockStyle.ORBIT,
     ) : LocalStore {
         private var settings = initialSettings
         private var snapshot = initialSnapshot
         private var snapshotIdentity = identity(initialSettings)
         var delayLoads = false
         var beforeSnapshotSave: ((Snapshot) -> Unit)? = null
+        private var clockStyle = initialClockStyle
+        var failClockSave = false
         val savedRevisions = mutableListOf<Long>()
         val savedIdentityRevisions = mutableListOf<Pair<String, Long>>()
 
@@ -380,6 +470,13 @@ class StintControllerTest {
             snapshotIdentity = identity(settings)
             savedRevisions += snapshot.revision
             savedIdentityRevisions += identity(settings) to snapshot.revision
+        }
+
+        override fun loadClockStyle(): TimerClockStyle = clockStyle
+
+        override fun saveClockStyle(style: TimerClockStyle) {
+            check(!failClockSave) { "injected clock style save failure" }
+            clockStyle = style
         }
 
         private fun identity(settings: ConnectionSettings) = "${settings.baseUrl}:${settings.token}"

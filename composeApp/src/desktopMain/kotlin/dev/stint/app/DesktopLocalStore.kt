@@ -3,6 +3,7 @@ package dev.stint.app
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.LocalStore
 import dev.stint.shared.Snapshot
+import dev.stint.shared.TimerClockStyle
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.nio.charset.StandardCharsets
@@ -85,6 +86,14 @@ class DesktopLocalStore internal constructor(
         }
     }
 
+    override fun loadClockStyle(): TimerClockStyle =
+        TimerClockStyle.fromStored(preferences.get(KEY_CLOCK_STYLE, null))
+
+    override fun saveClockStyle(style: TimerClockStyle) {
+        preferences.put(KEY_CLOCK_STYLE, style.name)
+        preferences.flush()
+    }
+
     private fun keychainAccount(baseUrl: String): String =
         if (baseUrl.isBlank()) "" else "connection-${baseUrl.sha256().take(24)}"
 
@@ -105,6 +114,7 @@ class DesktopLocalStore internal constructor(
         const val KEY_BASE_URL = "baseUrl"
         const val KEY_DEVICE_ID = "deviceId"
         const val KEY_DEVICE_NAME = "deviceName"
+        const val KEY_CLOCK_STYLE = "clockStyle"
     }
 }
 

@@ -1,6 +1,5 @@
 package dev.stint.app.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -34,12 +36,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalDensity
 import dev.stint.shared.ClientController
@@ -48,6 +52,9 @@ import dev.stint.shared.ConnectionStatus
 import dev.stint.shared.FocusSession
 import dev.stint.shared.Subject
 import dev.stint.shared.TimerMode
+import dev.stint.shared.TimerClockStyle
+import dev.stint.shared.countdownClockReading
+import dev.stint.shared.stopwatchClockReading
 import dev.stint.shared.TimerPhase
 import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
@@ -84,17 +91,20 @@ internal fun FocusTab(
         Column(
             modifier
                 .let { if (scrollable) it.verticalScroll(rememberScrollState()) else it }
-                .padding(horizontal = if (wide) 34.dp else 20.dp, vertical = 28.dp),
+                .padding(horizontal = if (wide) 34.dp else 20.dp, vertical = if (wide) 24.dp else 20.dp),
         ) {
             SectionEyebrow("작업대")
             Spacer(Modifier.height(8.dp))
             SubjectRail(subjects, activeSubject?.id, onSelectSubject, onAddSubject)
-            Spacer(Modifier.height(if (wide) 46.dp else 32.dp))
+            Spacer(Modifier.height(if (wide) 28.dp else 18.dp))
             TimerWorkbench(
                 timer = timer,
                 subject = activeSubject,
                 nowEpochMs = nowEpochMs,
                 selectedMode = selectedMode,
+                clockStyle = state.clockStyle,
+                onClockStyle = controller::setClockStyle,
+                clockHeight = if (wide) 286.dp else 232.dp,
                 canMutate = connected,
                 onMode = { selectedModeName = it.name },
                 onStart = { activeSubject?.let { controller.start(it.id, selectedMode, if (selectedMode == TimerMode.COUNTDOWN) it.focusSeconds else null) } },
@@ -103,7 +113,7 @@ internal fun FocusTab(
                 onFinish = controller::finish,
                 onSkipBreak = controller::skipBreak,
             )
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.height(24.dp))
             ThinRule()
             Spacer(Modifier.height(18.dp))
             SubjectSummary(activeSubject, onEditSubject)
@@ -222,9 +232,18 @@ private fun TabletopFocus(
         ) {
             SectionEyebrow("테이블탑 · 보기")
             Spacer(Modifier.height(6.dp))
-            SubjectRail(subjects, activeSubject?.id, onSelectSubject, onAddSubject)
-            Spacer(Modifier.height(22.dp))
-            TimerReadout(timer, activeSubject, nowEpochMs, selectedMode, onMode)
+            TimerReadout(
+                timer = timer,
+                subject = activeSubject,
+                nowEpochMs = nowEpochMs,
+                selectedMode = selectedMode,
+                onMode = onMode,
+                clockStyle = state.clockStyle,
+                onClockStyle = controller::setClockStyle,
+                clockHeight = (hingeTopDp - 116f).coerceIn(72f, 180f).dp,
+                showModeSelector = false,
+                showStylePicker = false,
+            )
         }
         Spacer(Modifier.height(hingeHeightDp.dp))
         Row(Modifier.weight(1f).fillMaxWidth()) {
@@ -235,7 +254,16 @@ private fun TabletopFocus(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 28.dp, vertical = 18.dp),
             ) {
-                SectionEyebrow("손이 닿는 곳")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.weight(1f)) { SectionEyebrow("손이 닿는 곳") }
+                    ClockStylePicker(state.clockStyle, controller::setClockStyle)
+                }
+                Spacer(Modifier.height(8.dp))
+                SubjectRail(subjects, activeSubject?.id, onSelectSubject, onAddSubject)
+                if (timer.status == TimerStatus.IDLE && timer.phase == TimerPhase.FOCUS) {
+                    Spacer(Modifier.height(8.dp))
+                    ModeSwitch(selectedMode, onMode)
+                }
                 Spacer(Modifier.height(14.dp))
                 TimerActions(
                     timer = timer,
@@ -272,6 +300,9 @@ private fun TimerWorkbench(
     subject: Subject?,
     nowEpochMs: Long,
     selectedMode: TimerMode,
+    clockStyle: TimerClockStyle,
+    onClockStyle: (TimerClockStyle) -> Unit,
+    clockHeight: Dp,
     canMutate: Boolean,
     onMode: (TimerMode) -> Unit,
     onStart: () -> Unit,
@@ -280,8 +311,8 @@ private fun TimerWorkbench(
     onFinish: () -> Unit,
     onSkipBreak: () -> Unit,
 ) {
-    TimerReadout(timer, subject, nowEpochMs, selectedMode, onMode)
-    Spacer(Modifier.height(30.dp))
+    TimerReadout(timer, subject, nowEpochMs, selectedMode, onMode, clockStyle, onClockStyle, clockHeight)
+    Spacer(Modifier.height(16.dp))
     TimerActions(
         timer = timer,
         subject = subject,
@@ -302,6 +333,11 @@ private fun TimerReadout(
     nowEpochMs: Long,
     selectedMode: TimerMode,
     onMode: (TimerMode) -> Unit,
+    clockStyle: TimerClockStyle,
+    onClockStyle: (TimerClockStyle) -> Unit,
+    clockHeight: Dp,
+    showModeSelector: Boolean = true,
+    showStylePicker: Boolean = true,
 ) {
     val status = timer.status
     val shownMode = if (status == TimerStatus.IDLE) selectedMode else timer.mode
@@ -318,24 +354,26 @@ private fun TimerReadout(
         TimerPhase.LONG_BREAK -> "긴 휴식"
     }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(phaseLabel, color = Clay, style = MaterialTheme.typography.labelLarge)
-        Spacer(Modifier.width(12.dp))
-        Text(subject?.name ?: "주제를 고르세요", color = InkMuted, style = MaterialTheme.typography.bodyMedium)
+    Row(Modifier.fillMaxWidth().heightIn(min = 40.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(phaseLabel, color = Clay, style = MaterialTheme.typography.labelLarge)
+            Text(subject?.name ?: "주제를 고르세요", color = InkMuted, style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (showStylePicker) ClockStylePicker(clockStyle, onClockStyle)
     }
-    if (status == TimerStatus.IDLE && timer.phase == TimerPhase.FOCUS) {
-        Spacer(Modifier.height(14.dp))
+    if (showModeSelector && status == TimerStatus.IDLE && timer.phase == TimerPhase.FOCUS) {
+        Spacer(Modifier.height(8.dp))
         ModeSwitch(selectedMode, onMode)
     }
-    Spacer(Modifier.height(20.dp))
-    Text(
-        formatTimer(seconds),
-        color = Ink,
-        style = MaterialTheme.typography.displayLarge,
-        maxLines = 1,
+    Spacer(Modifier.height(8.dp))
+    val target = if (status == TimerStatus.IDLE) subject?.focusSeconds ?: timer.targetSeconds else timer.targetSeconds
+    val reading = if (shownMode == TimerMode.STOPWATCH) stopwatchClockReading(seconds) else countdownClockReading(seconds, target)
+    TimerClockVisual(
+        style = clockStyle,
+        reading = reading,
+        running = status == TimerStatus.RUNNING,
+        height = clockHeight,
     )
-    Spacer(Modifier.height(24.dp))
-    TimerLine(timer, nowEpochMs)
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth()) {
         Text(
@@ -359,6 +397,27 @@ private fun TimerReadout(
                 color = if (status == TimerStatus.RUNNING) Forest else Clay,
                 style = MaterialTheme.typography.labelMedium,
             )
+        }
+    }
+}
+
+@Composable
+private fun ClockStylePicker(style: TimerClockStyle, onStyle: (TimerClockStyle) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val label = if (style == TimerClockStyle.ORBIT) "오빗 링" else "모래시계"
+    Box {
+        TextButton(
+            onClick = { expanded = true },
+            modifier = Modifier.heightIn(min = 48.dp).semantics { contentDescription = "시계 모양: $label" },
+        ) { Text("$label ⌄", style = MaterialTheme.typography.labelMedium) }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            TimerClockStyle.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(if (option == TimerClockStyle.ORBIT) "오빗 링" else "모래시계") },
+                    onClick = { onStyle(option); expanded = false },
+                    trailingIcon = { if (option == style) Text("✓", color = Forest) },
+                )
+            }
         }
     }
 }
@@ -425,25 +484,6 @@ private fun ModeSwitch(mode: TimerMode, onMode: (TimerMode) -> Unit) {
                 ),
                 shape = RoundedCornerShape(50),
             ) { Text(label, style = MaterialTheme.typography.labelMedium) }
-        }
-    }
-}
-
-@Composable
-private fun TimerLine(timer: TimerState, nowEpochMs: Long) {
-    val elapsed = timer.elapsedSeconds(nowEpochMs)
-    val fraction = when {
-        timer.mode == TimerMode.STOPWATCH -> 0f
-        timer.targetSeconds <= 0 -> 0f
-        else -> (elapsed.toFloat() / timer.targetSeconds).coerceIn(0f, 1f)
-    }
-    Canvas(Modifier.fillMaxWidth().height(8.dp)) {
-        val y = size.height / 2
-        drawLine(Rule, Offset(0f, y), Offset(size.width, y), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
-        if (timer.mode == TimerMode.COUNTDOWN && fraction > 0f) {
-            drawLine(Clay, Offset(0f, y), Offset(size.width * fraction, y), strokeWidth = 4.dp.toPx(), cap = StrokeCap.Round)
-        } else if (timer.mode == TimerMode.STOPWATCH && timer.status != TimerStatus.IDLE) {
-            drawCircle(Forest, radius = 4.dp.toPx(), center = Offset(4.dp.toPx(), y))
         }
     }
 }

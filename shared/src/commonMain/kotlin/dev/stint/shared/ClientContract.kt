@@ -21,6 +21,7 @@ data class ClientState(
     val connection: ConnectionStatus = ConnectionStatus.SETUP,
     val working: Boolean = false,
     val message: String? = null,
+    val clockStyle: TimerClockStyle = TimerClockStyle.ORBIT,
 )
 
 interface ClientController {
@@ -35,6 +36,7 @@ interface ClientController {
     fun saveMemo(sessionId: String, memo: String)
     fun refresh()
     fun dismissMessage()
+    fun setClockStyle(style: TimerClockStyle)
     fun close()
 }
 
@@ -43,4 +45,6 @@ interface LocalStore {
     fun saveSettings(settings: ConnectionSettings)
     fun loadSnapshot(): Snapshot?
     fun saveSnapshot(snapshot: Snapshot)
+    fun loadClockStyle(): TimerClockStyle
+    fun saveClockStyle(style: TimerClockStyle)
 }

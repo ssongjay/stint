@@ -1,6 +1,7 @@
 package dev.stint.app
 
 import dev.stint.shared.ConnectionSettings
+import dev.stint.shared.TimerClockStyle
 import java.nio.file.Files
 import java.util.UUID
 import java.util.prefs.Preferences
@@ -9,6 +10,25 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 
 class DesktopLocalStoreTest {
+    @Test
+    fun `clock style persists independently from the connection secret`() {
+        val node = Preferences.userRoot().node("dev/stint/test/${UUID.randomUUID()}")
+        val directory = Files.createTempDirectory("stint-store-test-")
+        val secrets = FailingSecretStore("token")
+        try {
+            val store = DesktopLocalStore(node, secrets, directory)
+            assertEquals(TimerClockStyle.ORBIT, store.loadClockStyle())
+
+            store.saveClockStyle(TimerClockStyle.HOURGLASS)
+
+            assertEquals(TimerClockStyle.HOURGLASS, DesktopLocalStore(node, secrets, directory).loadClockStyle())
+            assertEquals("HOURGLASS", node.get("clockStyle", ""))
+        } finally {
+            node.removeNode()
+            Files.deleteIfExists(directory)
+        }
+    }
+
     @Test
     fun `keychain failure leaves the previous server pointer intact`() {
         val node = Preferences.userRoot().node("dev/stint/test/${UUID.randomUUID()}")

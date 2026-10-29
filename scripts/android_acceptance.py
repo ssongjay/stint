@@ -105,7 +105,7 @@ def retrieve_screenshot(name):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["install", "capture", "behavior", "transition", "all"])
+    parser.add_argument("action", choices=["install", "capture", "clock-capture", "behavior", "transition", "all"])
     parser.add_argument("--posture", choices=["folded", "book", "tabletop"])
     args = parser.parse_args()
     wait_for_boot()
@@ -123,6 +123,24 @@ def main():
                 screenshotName=name,
             )
             print(retrieve_screenshot(name))
+    if args.action == "clock-capture":
+        postures = [args.posture] if args.posture else ["folded", "book", "tabletop"]
+        for posture in postures:
+            captures = {}
+            for style in ("ORBIT", "HOURGLASS"):
+                # Each instrumentation test restores the device to OPENED in @After.
+                configure_posture(posture)
+                name = f"stint-{posture}-{style.lower()}"
+                instrument(
+                    "localClockStyleRendersAndPersistsWithoutChangingServerSnapshot",
+                    expectedLayout=posture,
+                    screenshotName=name,
+                    clockStyle=style,
+                )
+                captures[style] = retrieve_screenshot(name)
+                print(captures[style])
+            if captures["ORBIT"].read_bytes() == captures["HOURGLASS"].read_bytes():
+                raise RuntimeError(f"Clock styles produced identical screenshots in {posture} posture")
     if args.action in {"behavior", "all"}:
         configure_posture("book")
         instrument("controllerAndConnectedSnapshotSurviveActivityRecreationOnUnfoldedDisplay")

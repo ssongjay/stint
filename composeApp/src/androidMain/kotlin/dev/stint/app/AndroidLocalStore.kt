@@ -11,6 +11,7 @@ import android.util.Log
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.LocalStore
 import dev.stint.shared.Snapshot
+import dev.stint.shared.TimerClockStyle
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -97,6 +98,16 @@ class AndroidLocalStore(context: Context) : LocalStore {
         }
     }
 
+    override fun loadClockStyle(): TimerClockStyle =
+        TimerClockStyle.fromStored(preferences.getString(KEY_CLOCK_STYLE, null))
+
+    @SuppressLint("UseKtx")
+    override fun saveClockStyle(style: TimerClockStyle) {
+        check(preferences.edit().putString(KEY_CLOCK_STYLE, style.name).commit()) {
+            "Unable to save clock style"
+        }
+    }
+
     private fun encryptToken(token: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
@@ -152,6 +163,7 @@ class AndroidLocalStore(context: Context) : LocalStore {
         const val KEY_TOKEN = "encryptedToken"
         const val KEY_DEVICE_ID = "deviceId"
         const val KEY_DEVICE_NAME = "deviceName"
+        const val KEY_CLOCK_STYLE = "clockStyle"
         const val KEY_ALIAS = "dev.stint.app.connection-key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }

@@ -12,6 +12,7 @@ import dev.stint.shared.SaveSubjectRequest
 import dev.stint.shared.Snapshot
 import dev.stint.shared.Subject
 import dev.stint.shared.TimerAction
+import dev.stint.shared.TimerClockStyle
 import dev.stint.shared.TimerCommand
 import dev.stint.shared.TimerMode
 import io.ktor.client.HttpClient
@@ -80,6 +81,7 @@ class StintController(
     } else null
     private val initialConnectionAllowed = initialSettings.isComplete() && initialValidation == null
     private val initialSnapshot = initialSettings.takeIf { initialConnectionAllowed }?.let { localStore.loadSnapshot() }
+    private val initialClockStyle = runCatching { localStore.loadClockStyle() }.getOrDefault(TimerClockStyle.ORBIT)
     private val _state = MutableStateFlow(
         ClientState(
             settings = initialSettings,
@@ -87,6 +89,7 @@ class StintController(
             serverNowEpochMs = initialSnapshot?.serverNowEpochMs ?: clock(),
             connection = if (initialConnectionAllowed) ConnectionStatus.CONNECTING else ConnectionStatus.SETUP,
             message = initialValidation,
+            clockStyle = initialClockStyle,
         ),
     )
     override val state: StateFlow<ClientState> = _state.asStateFlow()
@@ -167,6 +170,16 @@ class StintController(
 
     override fun dismissMessage() {
         _state.update { it.copy(message = null) }
+    }
+
+    override fun setClockStyle(style: TimerClockStyle) {
+        if (closed || style == _state.value.clockStyle) return
+        try {
+            localStore.saveClockStyle(style)
+            _state.update { it.copy(clockStyle = style, message = null) }
+        } catch (_: Throwable) {
+            _state.update { it.copy(message = "시계 모양을 이 기기에 저장하지 못했어요.") }
+        }
     }
 
     override fun close() {
