@@ -33,4 +33,5 @@ accepted snapshot 저장은 같은 mutex에서 처리해 이전 서버 응답이
 보호한다. 서버별 identity hash로 캐시를 구분하고 원자적인 파일 교체로 저장한다.
 Android cloud backup/device transfer에서는 설정·캐시를 제외한다.
 
-서버는 MySQL을 원본으로 삼고, 앱 캐시는 백업을 대신하지 않는다. 백업과
+서버는 MySQL을 원본으로 삼고 앱 캐시는 백업을 대신하지 않는다. DB 백업은
+연결 키와 분리해 암호화하고, 별도 환경에 복원 검증한 뒤 운영 절차로 사용한다.

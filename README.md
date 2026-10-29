@@ -1,8 +1,18 @@
 # Stint
 
-맥과 안드로이드에서 같은 집중 타이머와 기록을 이어 보는 개인용 앱.
-크림색·잉크색의 차분한 워크벤치로 현재 작업과 시간을 먼저 보여준다.
-가칭은 기존 이름 후보 중 Stint를 사용한다.
+macOS와 Android에서 같은 집중 타이머와 기록을 이어 보는 Kotlin 앱이다.
+Compose Multiplatform 화면과 Ktor/MySQL 서버를 사용하며 iCloud에 의존하지 않는다.
+
+## 기능
+
+- 주제별 집중 시간, 짧은·긴 휴식, 긴 휴식 간격
+- 카운트다운·스톱워치, 일시정지·재개·종료
+- 오빗 링·모래시계 표시와 기기별 시계 선택 저장
+- 멈춘 카운트다운의 경과 시간을 유지하는 목표 시간 변경
+- 완료한 집중 기록, 회고, 오늘·7일·30일 통계
+- HTTPS snapshot과 WebSocket을 통한 여러 기기 동기화
+- 접힘·펼침·테이블탑 자세에 맞춘 Android 폴더블 레이아웃
+- macOS 메뉴바에서 열기·일시정지·재개·종료
 
 ## 구성
 
@@ -11,15 +21,15 @@
 | composeApp | Compose Multiplatform 화면, macOS 앱, Android 앱, 로컬 캐시 |
 | shared | JSON 계약, 타이머 계산, 클라이언트 인터페이스 |
 | server | Kotlin Ktor API·WebSocket, MySQL 트랜잭션과 기록 |
-| scripts | 독립 개발 DB와 실행·검증 도구 |
+| scripts | 격리된 개발 DB와 검증 도구 |
 
 기기들은 한 서버의 현재 상태를 공유한다. iCloud는 사용하지 않는다.
 서버의 revision과 명령 id로 동시 조작·재전송을 처리하고, 연결이 끊기면
 저장된 타이머와 기록을 보여준다. 오프라인 조작은 재연결 후에 허용한다.
 
 타이머 오른쪽에서 **오빗 링 / 모래시계**를 고를 수 있다. 한 바퀴와 모래 전체는
-항상 60분 기준이다. 25분 집중을 시작하면 약 42%를 표시하며 집중 시간 설정은
-그대로 사용한다. 모양은 각 기기에 저장하고 타이머·기록은 서버로 동기화한다.
+항상 60분 기준이며 숫자가 실제 남은 시간을 표시한다. 모양은 기기별로 저장하고
+타이머·기록은 서버로 동기화한다.
 
 시계 옆 **시간 설정**에서 기본 집중·휴식 시간과 간격을 바꾼다.
 멈춘 카운트다운은 이미 지난 시간을 유지하면서 이번 전체 목표만 바꿀 수 있다.
@@ -27,7 +37,7 @@
 
 ## 개발 환경
 
-- JDK **17**. Android Studio의 번들 JDK 25 대신 Gradle JDK도 17로 지정한다.
+- JDK **17**
 - Gradle Wrapper 8.13 / Kotlin 2.2.21 / Compose Multiplatform 1.9.3.
 - Android SDK 36, minSdk 26.
 - MySQL 서버 바이너리. 개발용 인스턴스는 기존 MySQL과 별도로 3307에 실행한다.
@@ -44,9 +54,9 @@ python3 scripts/dev.py desktop
 ./gradlew :composeApp:assembleDebug
 ```
 
-개발용 연결 정보는 .local/dev.json에 만들고 Git에서 제외한다. 앱에 키를
-하드코딩하지 않는다. Android 앱은 연결 화면에서 서버 URL과 키를 입력한다.
-실제 서비스에서는 HTTPS 주소를 사용한다.
+개발용 연결 정보는 `.local/dev.json`에 만들고 Git에서 제외한다. 운영 서버 주소와
+연결 키는 소스나 APK에 넣지 않는다. 앱의 연결 화면에서 HTTPS 서버 주소와
+충분히 긴 임의 연결 키를 입력한다.
 
 ## 검증과 패키징
 
@@ -60,10 +70,10 @@ python3 scripts/dev.py test
 scripts/dev.py test는 독립된 stint_test DB를 사용한다. 운영 DB를 테스트에
 연결하지 않는다. 물리 Android 기기 검증은 빌드·에뮬레이터 검증과 구분한다.
 
-## 설계
+## 문서
 
 - [설치와 두 기기 연결](docs/INSTALL.md)
-- [현재 구현 기준](docs/IMPLEMENTATION.md)
+- [구현과 동기화 규칙](docs/IMPLEMENTATION.md)
+- [데이터 모델](docs/DATA_MODEL.md)
 
-이전 Android 학습 전용·서버 없음 계획은 2026-10-29 요청으로 교체했다.
-참고 앱의 사운드·이미지·문구·화면 배치를 가져오지 않는다.
+폰트 라이선스 원문은 `composeApp/src/commonMain/composeResources/files/`에 있다.

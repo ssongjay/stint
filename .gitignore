@@ -11,3 +11,15 @@ local.properties
 artifacts/
 __pycache__/
 *.pyc
+
+# Personal planning, verification and host deployment remain local.
+/CLAUDE.md
+/docs/*
+!/docs/DATA_MODEL.md
+!/docs/IMPLEMENTATION.md
+!/docs/INSTALL.md
+/scripts/deploy.py
+/scripts/pull_backup.py
+/ops/remote_install.py
+/ops/test_deployment.py
+/.impeccable.md

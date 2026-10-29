@@ -9,7 +9,27 @@ import sys
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
-SDK = Path("/opt/android-sdk")
+
+
+def android_sdk():
+    candidates = [os.environ.get("ANDROID_HOME"), os.environ.get("ANDROID_SDK_ROOT")]
+    properties = ROOT / "local.properties"
+    if properties.is_file():
+        for line in properties.read_text().splitlines():
+            key, separator, value = line.partition("=")
+            if separator and key.strip() == "sdk.dir":
+                candidates.append(value.strip().replace("\\:", ":").replace("\\\\", "\\"))
+                break
+    candidates.append(str(Path.home() / "Library/Android/sdk"))
+    for candidate in candidates:
+        if candidate and (Path(candidate).expanduser() / "platform-tools/adb").is_file():
+            return Path(candidate).expanduser()
+    raise RuntimeError(
+        "Android SDK not found. Set ANDROID_HOME/ANDROID_SDK_ROOT or sdk.dir in local.properties.",
+    )
+
+
+SDK = android_sdk()
 ADB = SDK / "platform-tools/adb"
 SERIAL = "emulator-5554"
 PACKAGE = "dev.stint.app"
