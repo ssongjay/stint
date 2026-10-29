@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Stint database backup
+
+[Timer]
+OnCalendar=*-*-* 04:40:00
+RandomizedDelaySec=120
+Persistent=true
+Unit=stint-backup.service
+
+[Install]
+WantedBy=timers.target

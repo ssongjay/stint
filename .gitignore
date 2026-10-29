@@ -1,0 +1,13 @@
+.omc/
+.DS_Store
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.local/
+*.log
+.idea/
+.omx/state/
+artifacts/
+__pycache__/
+*.pyc

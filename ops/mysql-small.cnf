@@ -1,0 +1,26 @@
+# Dedicated to Stint's newly installed MySQL. Never apply to an existing database.
+[mysqld]
+bind-address = 127.0.0.1
+mysqlx = 0
+skip-name-resolve
+performance_schema = OFF
+innodb_dedicated_server = OFF
+innodb_buffer_pool_size = 64M
+innodb_log_buffer_size = 8M
+innodb_redo_log_capacity = 64M
+max_connections = 16
+thread_cache_size = 4
+table_open_cache = 128
+table_open_cache_instances = 1
+table_definition_cache = 400
+key_buffer_size = 8M
+tmp_table_size = 4M
+max_heap_table_size = 4M
+temptable_max_ram = 16M
+temptable_max_mmap = 0
+sort_buffer_size = 256K
+join_buffer_size = 256K
+read_buffer_size = 128K
+read_rnd_buffer_size = 256K
+max_allowed_packet = 16M
+skip-log-bin

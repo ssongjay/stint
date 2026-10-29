@@ -1,0 +1,19 @@
+[Unit]
+Description=Backup only the Stint MySQL database
+After=mysql.service
+Requires=mysql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/stint/backup.py
+User=root
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/stint
+MemoryMax=96M
+TasksMax=16

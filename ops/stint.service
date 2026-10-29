@@ -1,0 +1,33 @@
+[Unit]
+Description=Stint personal focus sync server
+After=network.target mysql.service
+Requires=mysql.service
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=stint
+Group=stint
+WorkingDirectory=/opt/stint/current
+EnvironmentFile=/etc/stint/server.env
+Environment="JAVA_OPTS=-Xms32m -Xmx96m -XX:+UseSerialGC -XX:MaxMetaspaceSize=96m -XX:MaxDirectMemorySize=32m -XX:ActiveProcessorCount=1 -Dio.netty.allocator.numDirectArenas=1 -Dio.netty.allocator.numHeapArenas=1"
+ExecStart=/opt/stint/current/bin/server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/stint
+MemoryAccounting=true
+MemoryHigh=256M
+MemoryMax=320M
+TasksMax=64
+LimitNOFILE=4096
+OOMScoreAdjust=500
+
+[Install]
+WantedBy=multi-user.target
