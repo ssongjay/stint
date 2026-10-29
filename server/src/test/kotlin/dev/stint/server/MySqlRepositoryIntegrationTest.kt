@@ -155,6 +155,76 @@ class MySqlRepositoryIntegrationTest {
     }
 
     @Test
+    fun `paused countdown duration changes once without resetting elapsed progress`() {
+        val paused = pauseStartedTimer("duration")
+        val command = TimerCommand(
+            context = context("set-duration", "android", paused.revision),
+            action = TimerAction.SET_DURATION,
+            targetSeconds = 120,
+        )
+
+        val first = repository.execute(command)
+        val repeated = repository.execute(command)
+
+        assertTrue(first.changed)
+        assertFalse(repeated.changed)
+        assertEquals(first.snapshot.revision, repeated.snapshot.revision)
+        assertEquals(2_500, first.snapshot.timer.accumulatedMillis)
+        assertEquals(120, first.snapshot.timer.targetSeconds)
+        assertEquals(paused.timer.id, first.snapshot.timer.id)
+        assertEquals(paused.timer.startedAtEpochMs, first.snapshot.timer.startedAtEpochMs)
+        assertEquals(TimerStatus.PAUSED, first.snapshot.timer.status)
+    }
+
+    @Test
+    fun `duration below exact elapsed time rolls back without consuming revision`() {
+        val paused = pauseStartedTimer("invalid-duration")
+
+        assertFailsWith<ValidationException> {
+            repository.execute(
+                TimerCommand(
+                    context = context("too-short", "mac", paused.revision),
+                    action = TimerAction.SET_DURATION,
+                    targetSeconds = 2,
+                ),
+            )
+        }
+
+        val current = repository.snapshot()
+        assertEquals(paused.revision, current.revision)
+        assertEquals(paused.timer, current.timer)
+    }
+
+    @Test
+    fun `two duration changes at one revision allow one winner`() {
+        val paused = pauseStartedTimer("competing-duration")
+        val gate = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        val calls = listOf(120, 180).mapIndexed { index, target ->
+            executor.submit<Result<MutationResult>> {
+                gate.await()
+                runCatching {
+                    repository.execute(
+                        TimerCommand(
+                            context = context("duration-$index", "device-$index", paused.revision),
+                            action = TimerAction.SET_DURATION,
+                            targetSeconds = target,
+                        ),
+                    )
+                }
+            }
+        }
+
+        gate.countDown()
+        val results = calls.map { it.get() }
+        executor.shutdown()
+
+        assertEquals(1, results.count { it.isSuccess })
+        assertEquals(1, results.count { it.exceptionOrNull() is RevisionConflictException })
+        assertTrue(repository.snapshot().timer.targetSeconds in setOf(120, 180))
+    }
+
+    @Test
     fun `snapshot reads one repeatable revision while writes commit concurrently`() {
         val reading = repository.snapshot().subjects.first { it.id == "reading" }
         val running = AtomicBoolean(true)
@@ -194,6 +264,17 @@ class MySqlRepositoryIntegrationTest {
         action = TimerAction.START,
         subjectId = "study",
     )
+
+    private fun pauseStartedTimer(prefix: String): dev.stint.shared.Snapshot {
+        val started = repository.execute(start("$prefix-start", "mac", repository.snapshot().revision)).snapshot
+        clock.value.set(12_500)
+        return repository.execute(
+            TimerCommand(
+                context = context("$prefix-pause", "mac", started.revision),
+                action = TimerAction.PAUSE,
+            ),
+        ).snapshot
+    }
 
     private fun context(command: String, device: String, revision: Long) = MutationContext(
         commandId = command,

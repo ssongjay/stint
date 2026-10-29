@@ -6,6 +6,20 @@ import kotlin.test.assertTrue
 
 class TimerClockTest {
     @Test
+    fun subsecondProgressMovesWithoutChangingTheDisplayedSecondEarly() {
+        val earlier = countdownClockReadingMillis(1_499_750, 1_500_000)
+        val later = countdownClockReadingMillis(1_499_500, 1_500_000)
+        assertEquals(1500, earlier.valueSeconds)
+        assertEquals(1500, later.valueSeconds)
+        assertTrue(earlier.ringFraction > later.ringFraction)
+        assertTrue(earlier.lowerSandFraction < later.lowerSandFraction)
+        assertEquals(25f / 60f, later.upperSandFraction + later.lowerSandFraction, .00001f)
+        val stopwatch = stopwatchClockReadingMillis(250)
+        assertEquals(0, stopwatch.valueSeconds)
+        assertTrue(stopwatch.ringFraction > 0f)
+    }
+
+    @Test
     fun twentyFiveMinuteSessionUsesOnlyTwentyFiveOfSixtyMinutesOfSand() {
         val initial = countdownClockReading(1500, 1500)
         assertEquals(25f / 60f, initial.ringFraction)

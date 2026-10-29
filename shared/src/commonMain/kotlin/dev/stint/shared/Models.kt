@@ -12,7 +12,7 @@ enum class TimerPhase { FOCUS, SHORT_BREAK, LONG_BREAK }
 enum class TimerStatus { IDLE, RUNNING, PAUSED }
 
 @Serializable
-enum class TimerAction { START, PAUSE, RESUME, FINISH, SKIP_BREAK }
+enum class TimerAction { START, PAUSE, RESUME, FINISH, SKIP_BREAK, SET_DURATION }
 
 @Serializable
 data class Subject(
@@ -86,6 +86,7 @@ data class TimerCommand(
     val subjectId: String? = null,
     val mode: TimerMode = TimerMode.COUNTDOWN,
     val focusSeconds: Int? = null,
+    val targetSeconds: Int? = null,
 )
 
 @Serializable
@@ -97,13 +98,21 @@ data class SaveMemoRequest(val context: MutationContext, val memo: String)
 @Serializable
 data class ApiError(val code: String, val message: String, val snapshot: Snapshot? = null)
 
-fun TimerState.elapsedSeconds(serverNowEpochMs: Long): Int {
+fun TimerState.elapsedMillis(serverNowEpochMs: Long): Long {
     val running = if (status == TimerStatus.RUNNING && runningSinceEpochMs != null)
         (serverNowEpochMs - runningSinceEpochMs).coerceAtLeast(0)
     else 0L
-    val elapsed = ((accumulatedMillis + running) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-    return if (mode == TimerMode.COUNTDOWN) elapsed.coerceAtMost(targetSeconds) else elapsed
+    val stored = accumulatedMillis.coerceAtLeast(0)
+    val elapsed = if (stored > Long.MAX_VALUE - running) Long.MAX_VALUE else stored + running
+    return if (mode == TimerMode.COUNTDOWN) {
+        elapsed.coerceAtMost(targetSeconds.coerceAtLeast(0) * 1000L)
+    } else {
+        elapsed
+    }
 }
+
+fun TimerState.elapsedSeconds(serverNowEpochMs: Long): Int =
+    (elapsedMillis(serverNowEpochMs) / 1000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
 fun TimerState.remainingSeconds(serverNowEpochMs: Long): Int =
     if (mode == TimerMode.STOPWATCH) 0 else

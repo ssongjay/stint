@@ -53,13 +53,12 @@ import dev.stint.shared.FocusSession
 import dev.stint.shared.Subject
 import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerClockStyle
-import dev.stint.shared.countdownClockReading
-import dev.stint.shared.stopwatchClockReading
+import dev.stint.shared.countdownClockReadingMillis
+import dev.stint.shared.stopwatchClockReadingMillis
 import dev.stint.shared.TimerPhase
 import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
-import dev.stint.shared.elapsedSeconds
-import dev.stint.shared.remainingSeconds
+import dev.stint.shared.elapsedMillis
 
 @Composable
 internal fun FocusTab(
@@ -70,6 +69,7 @@ internal fun FocusTab(
     onSelectSubject: (String) -> Unit,
     onAddSubject: () -> Unit,
     onEditSubject: () -> Unit,
+    onTimeSettings: () -> Unit,
     wide: Boolean,
     foldPosture: FoldPosture,
 ) {
@@ -112,6 +112,7 @@ internal fun FocusTab(
                 onResume = controller::resume,
                 onFinish = controller::finish,
                 onSkipBreak = controller::skipBreak,
+                onTimeSettings = onTimeSettings,
             )
             Spacer(Modifier.height(24.dp))
             ThinRule()
@@ -149,6 +150,7 @@ internal fun FocusTab(
                 onSelectSubject = onSelectSubject,
                 onAddSubject = onAddSubject,
                 onEditSubject = onEditSubject,
+                onTimeSettings = onTimeSettings,
                 hingeTopDp = hingeTop,
                 hingeHeightDp = foldPosture.hingeHeightDp,
             )
@@ -208,6 +210,7 @@ private fun TabletopFocus(
     onSelectSubject: (String) -> Unit,
     onAddSubject: () -> Unit,
     onEditSubject: () -> Unit,
+    onTimeSettings: () -> Unit,
     hingeTopDp: Float,
     hingeHeightDp: Float,
 ) {
@@ -243,6 +246,7 @@ private fun TabletopFocus(
                 clockHeight = (hingeTopDp - 116f).coerceIn(72f, 180f).dp,
                 showModeSelector = false,
                 showStylePicker = false,
+                showTimeSettings = false,
             )
         }
         Spacer(Modifier.height(hingeHeightDp.dp))
@@ -276,6 +280,10 @@ private fun TabletopFocus(
                     onFinish = controller::finish,
                     onSkipBreak = controller::skipBreak,
                 )
+                TextButton(
+                    onClick = onTimeSettings,
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("시간 설정") }
                 Spacer(Modifier.height(22.dp))
                 ThinRule()
                 Spacer(Modifier.height(14.dp))
@@ -310,8 +318,19 @@ private fun TimerWorkbench(
     onResume: () -> Unit,
     onFinish: () -> Unit,
     onSkipBreak: () -> Unit,
+    onTimeSettings: () -> Unit,
 ) {
-    TimerReadout(timer, subject, nowEpochMs, selectedMode, onMode, clockStyle, onClockStyle, clockHeight)
+    TimerReadout(
+        timer,
+        subject,
+        nowEpochMs,
+        selectedMode,
+        onMode,
+        clockStyle,
+        onClockStyle,
+        clockHeight,
+        onTimeSettings = onTimeSettings,
+    )
     Spacer(Modifier.height(16.dp))
     TimerActions(
         timer = timer,
@@ -338,16 +357,12 @@ private fun TimerReadout(
     clockHeight: Dp,
     showModeSelector: Boolean = true,
     showStylePicker: Boolean = true,
+    showTimeSettings: Boolean = true,
+    onTimeSettings: () -> Unit = {},
 ) {
     val status = timer.status
     val shownMode = if (status == TimerStatus.IDLE) selectedMode else timer.mode
-    val elapsed = timer.elapsedSeconds(nowEpochMs)
-    val seconds = when {
-        status == TimerStatus.IDLE && shownMode == TimerMode.COUNTDOWN -> subject?.focusSeconds ?: timer.targetSeconds
-        status == TimerStatus.IDLE -> 0
-        shownMode == TimerMode.COUNTDOWN -> timer.remainingSeconds(nowEpochMs)
-        else -> elapsed
-    }
+    val elapsed = if (status == TimerStatus.IDLE) 0L else timer.elapsedMillis(nowEpochMs)
     val phaseLabel = when (timer.phase) {
         TimerPhase.FOCUS -> if (status == TimerStatus.IDLE) "다음 집중" else "집중 중"
         TimerPhase.SHORT_BREAK -> "짧은 휴식"
@@ -367,12 +382,18 @@ private fun TimerReadout(
     }
     Spacer(Modifier.height(8.dp))
     val target = if (status == TimerStatus.IDLE) subject?.focusSeconds ?: timer.targetSeconds else timer.targetSeconds
-    val reading = if (shownMode == TimerMode.STOPWATCH) stopwatchClockReading(seconds) else countdownClockReading(seconds, target)
+    val targetMillis = target.coerceAtLeast(0) * 1000L
+    val reading = if (shownMode == TimerMode.STOPWATCH) {
+        stopwatchClockReadingMillis(elapsed)
+    } else {
+        countdownClockReadingMillis((targetMillis - elapsed).coerceAtLeast(0), targetMillis)
+    }
     TimerClockVisual(
         style = clockStyle,
         reading = reading,
         running = status == TimerStatus.RUNNING,
         height = clockHeight,
+        sizingReferenceSeconds = if (shownMode == TimerMode.COUNTDOWN) target else reading.valueSeconds,
     )
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth()) {
@@ -387,6 +408,12 @@ private fun TimerReadout(
             style = MaterialTheme.typography.labelMedium,
         )
         Spacer(Modifier.weight(1f))
+        if (showTimeSettings) {
+            TextButton(
+                onClick = onTimeSettings,
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text("시간 설정") }
+        }
         if (status != TimerStatus.IDLE) {
             Text(
                 when (status) {

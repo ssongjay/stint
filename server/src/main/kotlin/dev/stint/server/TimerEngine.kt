@@ -43,6 +43,16 @@ object TimerEngine {
         )
     }
 
+    fun setDuration(timer: TimerState, targetSeconds: Int): TimerState {
+        require(timer.status == TimerStatus.PAUSED) { "Only a paused timer duration can be changed" }
+        require(timer.mode == TimerMode.COUNTDOWN) { "Only a countdown duration can be changed" }
+        require(targetSeconds in 1..14_400) { "targetSeconds must be between 1 and 14400" }
+        require(targetSeconds * 1000L > timer.accumulatedMillis) {
+            "The new duration must be longer than the elapsed time"
+        }
+        return timer.copy(targetSeconds = targetSeconds)
+    }
+
     fun finish(
         timer: TimerState,
         subject: Subject?,

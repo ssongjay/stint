@@ -61,11 +61,12 @@ import dev.stint.shared.ClientController
 import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionStatus
 import dev.stint.shared.Subject
+import dev.stint.shared.TimerStatus
 import kotlinx.coroutines.delay
 import kotlin.time.TimeSource
 
 private enum class MainTab { FOCUS, RECORDS }
-internal enum class SidePanel { NONE, SUBJECT, CONNECTION }
+internal enum class SidePanel { NONE, SUBJECT, TIME, CONNECTION }
 
 /**
  * Folding feature bounds in density-independent pixels, relative to the application window.
@@ -164,6 +165,22 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
                     onClose = { panelName = SidePanel.NONE.name },
                 )
 
+                panel == SidePanel.TIME -> {
+                    val timer = state.snapshot?.timer
+                    val timeSubject = subjects.firstOrNull {
+                        timer?.status != TimerStatus.IDLE && it.id == timer?.subjectId
+                    } ?: subjects.firstOrNull { it.id == selectedSubjectId }
+                    TimeSettingsPanel(
+                        state = state,
+                        subject = timeSubject,
+                        nowEpochMs = tickNow,
+                        onPause = controller::pause,
+                        onSaveCurrent = controller::setTimerDuration,
+                        onSaveDefaults = controller::saveSubject,
+                        onClose = { panelName = SidePanel.NONE.name },
+                    )
+                }
+
                 tab == MainTab.FOCUS -> FocusTab(
                     controller = controller,
                     state = state,
@@ -178,6 +195,7 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
                         editingSubjectId = selectedSubjectId
                         panelName = SidePanel.SUBJECT.name
                     },
+                    onTimeSettings = { panelName = SidePanel.TIME.name },
                     wide = wide,
                     foldPosture = foldPosture,
                 )

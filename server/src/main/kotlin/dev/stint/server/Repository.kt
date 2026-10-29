@@ -107,6 +107,20 @@ class StintRepository(
                 }
                 TimerEngine.idleFocus(timer, subject)
             }
+            TimerAction.SET_DURATION -> {
+                val target = command.targetSeconds
+                    ?: throw ValidationException("바꿀 시간을 입력해 주세요.")
+                if (timer.status != TimerStatus.PAUSED || timer.mode != TimerMode.COUNTDOWN) {
+                    throw ValidationException("일시정지한 카운트다운에서만 시간을 바꿀 수 있어요.")
+                }
+                if (target !in 1..14_400) {
+                    throw ValidationException("시간은 1초부터 4시간까지 설정할 수 있어요.")
+                }
+                if (target * 1000L <= timer.accumulatedMillis) {
+                    throw ValidationException("지난 시간보다 길게 설정해 주세요.")
+                }
+                TimerEngine.setDuration(timer, target)
+            }
         }
         writeTimer(connection, next)
     }

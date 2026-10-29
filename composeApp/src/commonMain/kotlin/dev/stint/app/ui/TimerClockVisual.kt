@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -66,19 +67,31 @@ internal fun TimerClockVisual(
     running: Boolean,
     modifier: Modifier = Modifier,
     height: Dp = 260.dp,
+    sizingReferenceSeconds: Int = reading.valueSeconds,
 ) {
     val label = if (reading.countingUp) "경과 시간" else "남은 시간"
+    val renderedReading = animatedClockReading(reading, running)
+    val sizingReferenceTime = formatClockTime(sizingReferenceSeconds)
     val caption = buildString {
         append(if (style == TimerClockStyle.ORBIT) "한 바퀴 60분" else "모래 전체 60분")
         if (reading.extraHours > 0) append(" · +${reading.extraHours}시간")
     }
     when (style) {
-        TimerClockStyle.ORBIT -> OrbitClock(reading, label, caption, modifier.fillMaxWidth().height(height))
+        TimerClockStyle.ORBIT -> OrbitClock(
+            reading = renderedReading,
+            semanticReading = reading,
+            label = label,
+            caption = caption,
+            sizingReferenceTime = sizingReferenceTime,
+            modifier = modifier.fillMaxWidth().height(height),
+        )
         TimerClockStyle.HOURGLASS -> HourglassClock(
-            reading = reading,
+            reading = renderedReading,
+            semanticReading = reading,
             running = running,
             label = label,
             caption = caption,
+            sizingReferenceTime = sizingReferenceTime,
             modifier = modifier.fillMaxWidth().height(height),
         )
     }
@@ -87,8 +100,10 @@ internal fun TimerClockVisual(
 @Composable
 private fun OrbitClock(
     reading: TimerClockReading,
+    semanticReading: TimerClockReading,
     label: String,
     caption: String,
+    sizingReferenceTime: String,
     modifier: Modifier,
 ) {
     val time = formatClockTime(reading.valueSeconds)
@@ -98,7 +113,7 @@ private fun OrbitClock(
             Box(Modifier.size(diameter).align(Alignment.Center)) {
                 Canvas(
                     Modifier.fillMaxSize().semantics {
-                        contentDescription = "$label $time, 60분 중 ${(reading.ringFraction * 60).roundToInt()}분"
+                        contentDescription = "$label $time, 60분 중 ${(semanticReading.ringFraction * 60).roundToInt()}분"
                     },
                 ) {
                     val center = this.center
@@ -163,6 +178,7 @@ private fun OrbitClock(
                             Modifier.fillMaxWidth().height(
                                 if (showDetails) (centerHeight - detailHeight).coerceAtLeast(1.dp) else centerHeight,
                             ),
+                            sizingReferenceTime = sizingReferenceTime,
                         )
                         if (showDetails) {
                             Spacer(Modifier.height(3.dp))
@@ -184,9 +200,11 @@ private fun OrbitClock(
 @Composable
 private fun HourglassClock(
     reading: TimerClockReading,
+    semanticReading: TimerClockReading,
     running: Boolean,
     label: String,
     caption: String,
+    sizingReferenceTime: String,
     modifier: Modifier,
 ) {
     val time = formatClockTime(reading.valueSeconds)
@@ -202,9 +220,10 @@ private fun HourglassClock(
                 val timeHeight = (maxHeight - 40.dp).coerceIn(28.dp, 70.dp)
                 Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
                     HourglassDrawing(
-                        reading,
-                        phase,
-                        Modifier.weight(1.05f).fillMaxHeight(),
+                        reading = reading,
+                        semanticReading = semanticReading,
+                        phase = phase,
+                        modifier = Modifier.weight(1.05f).fillMaxHeight(),
                     )
                     ClockReadout(
                         label,
@@ -212,6 +231,7 @@ private fun HourglassClock(
                         Modifier.weight(.95f).fillMaxHeight().padding(horizontal = 8.dp),
                         alignStart = true,
                         timeHeight = timeHeight,
+                        sizingReferenceTime = sizingReferenceTime,
                     )
                 }
             } else {
@@ -224,8 +244,14 @@ private fun HourglassClock(
                         Modifier.fillMaxWidth().height(readoutHeight),
                         alignStart = false,
                         timeHeight = timeHeight,
+                        sizingReferenceTime = sizingReferenceTime,
                     )
-                    HourglassDrawing(reading, phase, Modifier.weight(1f).fillMaxWidth())
+                    HourglassDrawing(
+                        reading = reading,
+                        semanticReading = semanticReading,
+                        phase = phase,
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                    )
                 }
             }
         }
@@ -240,6 +266,7 @@ private fun ClockReadout(
     modifier: Modifier,
     alignStart: Boolean,
     timeHeight: Dp,
+    sizingReferenceTime: String,
 ) {
     BoxWithConstraints(modifier) {
         val fontScale = LocalDensity.current.fontScale
@@ -260,6 +287,7 @@ private fun ClockReadout(
                 time,
                 Modifier.fillMaxWidth().height(effectiveTimeHeight),
                 if (alignStart) TextAlign.Start else TextAlign.Center,
+                sizingReferenceTime,
             )
             if (showDetails) {
                 Text(
@@ -291,23 +319,34 @@ private fun FittedClockTime(
     time: String,
     modifier: Modifier,
     textAlign: TextAlign = TextAlign.Center,
+    sizingReferenceTime: String = time,
 ) {
     val measurer = rememberTextMeasurer()
     val base = MaterialTheme.typography.displayLarge
     BoxWithConstraints(modifier, contentAlignment = if (textAlign == TextAlign.Start) Alignment.CenterStart else Alignment.Center) {
         val availableWidth = constraints.maxWidth.toFloat()
         val availableHeight = constraints.maxHeight.toFloat()
-        val fontSize = remember(time, availableWidth, availableHeight, base, measurer) {
+        val sizingSamples = clockTimeSizingSamples(time, sizingReferenceTime)
+        val sizingKey = sizingSamples.first()
+        val fontSize = remember(sizingKey, availableWidth, availableHeight, base, measurer) {
             var low = 1f
             var high = 76f
             repeat(10) {
                 val middle = (low + high) / 2f
-                val measured = measurer.measure(
-                    text = AnnotatedString(time),
-                    style = base.copy(fontSize = middle.sp, lineHeight = (middle * 1.08f).sp),
-                    maxLines = 1,
+                val style = base.copy(
+                    fontSize = middle.sp,
+                    lineHeight = (middle * 1.08f).sp,
+                    fontFeatureSettings = "tnum",
                 )
-                if (measured.size.width <= availableWidth && measured.size.height <= availableHeight) low = middle else high = middle
+                val fits = sizingSamples.all { sample ->
+                    val measured = measurer.measure(
+                        text = AnnotatedString(sample),
+                        style = style,
+                        maxLines = 1,
+                    )
+                    measured.size.width <= availableWidth && measured.size.height <= availableHeight
+                }
+                if (fits) low = middle else high = middle
             }
             low.sp
         }
@@ -315,12 +354,89 @@ private fun FittedClockTime(
             time,
             modifier = Modifier.fillMaxWidth(),
             color = Ink,
-            style = base.copy(fontSize = fontSize, lineHeight = fontSize * 1.08f),
+            style = base.copy(
+                fontSize = fontSize,
+                lineHeight = fontSize * 1.08f,
+                fontFeatureSettings = "tnum",
+            ),
             maxLines = 1,
             textAlign = textAlign,
         )
     }
 }
+
+/**
+ * Stable samples for every numeral in the current time format. Measuring these rather than the
+ * current second keeps the readout size fixed even when a font does not support tabular figures.
+ */
+internal fun clockTimeSizingSamples(time: String, sizingReferenceTime: String = time): List<String> {
+    val sizingFormat = if (sizingReferenceTime.length >= time.length) sizingReferenceTime else time
+    val hasHours = sizingFormat.count { it == ':' } >= 2
+    val hourDigits = if (hasHours) sizingFormat.indexOf(':').coerceAtLeast(1) else 0
+    return (0..9).map { digit ->
+        val value = digit.toString()
+        if (hasHours) value.repeat(hourDigits) + ":" + value.repeat(2) + ":" + value.repeat(2)
+        else value.repeat(2) + ":" + value.repeat(2)
+    }
+}
+
+private data class ClockFractions(
+    val ring: Float,
+    val upperSand: Float,
+    val lowerSand: Float,
+)
+
+@Composable
+private fun animatedClockReading(reading: TimerClockReading, running: Boolean): TimerClockReading {
+    val target = ClockFractions(
+        ring = reading.ringFraction.coerceIn(0f, 1f),
+        upperSand = reading.upperSandFraction.coerceIn(0f, 1f),
+        lowerSand = reading.lowerSandFraction.coerceIn(0f, 1f),
+    )
+    var rendered by remember { mutableStateOf(target) }
+    var renderedHour by remember { mutableStateOf(reading.extraHours) }
+    LaunchedEffect(target, running, reading.extraHours) {
+        val durationScale = currentCoroutineContext()[MotionDurationScale]
+        val hourChanged = renderedHour != reading.extraHours
+        renderedHour = reading.extraHours
+        if (!running || hourChanged || durationScale?.scaleFactor == 0f) {
+            rendered = target
+            return@LaunchedEffect
+        }
+        val start = rendered
+        var previousFrame = withFrameNanos { it }
+        var elapsed = 0L
+        val baseDurationNanos = 230_000_000L
+        val minimumFrameNanos = 1_000_000_000L / 30L
+        while (elapsed < baseDurationNanos) {
+            val now = withFrameNanos { it }
+            val frameNanos = now - previousFrame
+            val scaleFactor = durationScale?.scaleFactor ?: 1f
+            if (scaleFactor == 0f) {
+                rendered = target
+                return@LaunchedEffect
+            }
+            if (frameNanos < minimumFrameNanos) continue
+            previousFrame = now
+            elapsed += (frameNanos / scaleFactor).toLong().coerceAtMost(baseDurationNanos)
+            val progress = (elapsed.toFloat() / baseDurationNanos).coerceIn(0f, 1f)
+            rendered = ClockFractions(
+                ring = lerp(start.ring, target.ring, progress),
+                upperSand = lerp(start.upperSand, target.upperSand, progress),
+                lowerSand = lerp(start.lowerSand, target.lowerSand, progress),
+            )
+        }
+        rendered = target
+    }
+    return reading.copy(
+        ringFraction = rendered.ring,
+        upperSandFraction = rendered.upperSand,
+        lowerSandFraction = rendered.lowerSand,
+    )
+}
+
+private fun lerp(start: Float, end: Float, fraction: Float): Float =
+    start + (end - start) * fraction.coerceIn(0f, 1f)
 
 @Composable
 private fun animatedSandPhase(enabled: Boolean): Float {
@@ -344,7 +460,7 @@ private fun animatedSandPhase(enabled: Boolean): Float {
             if (now - previousUpdate < minimumFrameNanos) continue
             val elapsedSeconds = ((now - previousUpdate).coerceAtMost(2_000_000_000L) / 1_000_000_000f) / scaleFactor
             previousUpdate = now
-            phase = (phase + elapsedSeconds * 1.35f) % 1f
+            phase = (phase + elapsedSeconds * .82f) % 1f
         }
     }
     return phase
@@ -353,6 +469,7 @@ private fun animatedSandPhase(enabled: Boolean): Float {
 @Composable
 private fun HourglassDrawing(
     reading: TimerClockReading,
+    semanticReading: TimerClockReading,
     phase: Float,
     modifier: Modifier,
 ) {
@@ -362,7 +479,7 @@ private fun HourglassDrawing(
     val lowerSurface = remember(lowerKey) { lowerSandSurface(lowerKey / 10_000f) }
     Canvas(
         modifier.semantics {
-            contentDescription = "곡선 유리 모래시계, ${formatClockTime(reading.valueSeconds)}, 윗모래 ${(reading.upperSandFraction * 60).roundToInt()}분, 아랫모래 ${(reading.lowerSandFraction * 60).roundToInt()}분"
+            contentDescription = "곡선 유리 모래시계, ${formatClockTime(semanticReading.valueSeconds)}, 윗모래 ${(semanticReading.upperSandFraction * 60).roundToInt()}분, 아랫모래 ${(semanticReading.lowerSandFraction * 60).roundToInt()}분"
         },
     ) {
         drawHourglass(reading, upperSurface, lowerSurface, phase)

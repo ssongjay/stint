@@ -32,6 +32,7 @@ interface ClientController {
     fun resume()
     fun finish()
     fun skipBreak()
+    fun setTimerDuration(targetSeconds: Int)
     fun saveSubject(subject: Subject)
     fun saveMemo(sessionId: String, memo: String)
     fun refresh()

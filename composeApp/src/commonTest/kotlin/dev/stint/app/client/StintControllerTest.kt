@@ -9,6 +9,7 @@ import dev.stint.shared.Subject
 import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
 import dev.stint.shared.TimerClockStyle
+import dev.stint.shared.TimerPhase
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -123,6 +124,133 @@ class StintControllerTest {
         assertEquals(2, bodies.size)
         assertTrue(bodies.all { it.contains("stable-command-id") })
         assertEquals(2, controller.state.value.snapshot?.revision)
+        controller.close()
+    }
+
+    @Test
+    fun `duration validation remains connected and sends the new target once`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 3, status = TimerStatus.PAUSED)
+        var mutationCount = 0
+        var body = ""
+        val controller = StintController(
+            client = client { request ->
+                if (request.url.encodedPath.endsWith("/timer/commands")) {
+                    mutationCount += 1
+                    body = when (val outgoing = request.body) {
+                        is TextContent -> outgoing.text
+                        is OutgoingContent.ByteArrayContent -> outgoing.bytes().decodeToString()
+                        else -> outgoing.toString()
+                    }
+                    jsonResponse(
+                        ApiError("invalid_request", "지난 시간보다 길게 설정해 주세요."),
+                        HttpStatusCode.BadRequest,
+                    )
+                } else {
+                    jsonResponse(initial)
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "duration-command" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+
+        controller.setTimerDuration(1_200)
+        withTimeout(2_000) { controller.state.first { it.message?.contains("지난 시간") == true } }
+
+        assertEquals(1, mutationCount)
+        assertTrue(body.contains("\"action\":\"SET_DURATION\""))
+        assertTrue(body.contains("\"targetSeconds\":1200"))
+        assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
+        assertFalse(controller.state.value.working)
+        assertEquals(3, controller.state.value.snapshot?.revision)
+        controller.close()
+    }
+
+    @Test
+    fun `authentication rejection is not treated as a local validation error`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 3, status = TimerStatus.PAUSED)
+        var mutationCount = 0
+        val controller = StintController(
+            client = client { request ->
+                if (request.url.encodedPath.endsWith("/timer/commands")) {
+                    mutationCount += 1
+                    jsonResponse(ApiError("unauthorized", "연결 키를 확인해 주세요."), HttpStatusCode.Unauthorized)
+                } else {
+                    jsonResponse(initial)
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "duration-command" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+
+        controller.setTimerDuration(1_200)
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.OFFLINE } }
+
+        assertEquals(1, mutationCount)
+        assertFalse(controller.state.value.working)
+        assertTrue(controller.state.value.message.orEmpty().contains("서버 상태"))
+        controller.close()
+    }
+
+    @Test
+    fun `queued duration change does not rebase onto a replaced timer`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 1, status = TimerStatus.PAUSED).copy(
+            timer = TimerState(
+                id = "timer-a",
+                subjectId = "study",
+                status = TimerStatus.PAUSED,
+                phase = TimerPhase.FOCUS,
+                targetSeconds = 1_500,
+                accumulatedMillis = 12_000,
+            ),
+        )
+        val replaced = initial.copy(
+            serverNowEpochMs = 1_100L,
+            revision = 2,
+            timer = initial.timer.copy(id = "timer-b", phase = TimerPhase.SHORT_BREAK),
+        )
+        val firstRequestStarted = CompletableDeferred<Unit>()
+        val releaseFirstRequest = CompletableDeferred<Unit>()
+        var durationRequests = 0
+        val controller = StintController(
+            client = client { request ->
+                when {
+                    request.url.encodedPath.endsWith("/subjects") -> {
+                        firstRequestStarted.complete(Unit)
+                        releaseFirstRequest.await()
+                        jsonResponse(replaced)
+                    }
+                    request.url.encodedPath.endsWith("/timer/commands") -> {
+                        durationRequests += 1
+                        jsonResponse(replaced)
+                    }
+                    else -> jsonResponse(initial)
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "command" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+
+        controller.saveSubject(initial.subjects.single())
+        withTimeout(2_000) { firstRequestStarted.await() }
+        controller.setTimerDuration(1_800)
+        releaseFirstRequest.complete(Unit)
+
+        withTimeout(2_000) { controller.state.first { it.message?.contains("시간 변경을 보내지 않았어요") == true } }
+
+        assertEquals(0, durationRequests)
+        assertEquals("timer-b", controller.state.value.snapshot?.timer?.id)
+        assertEquals(2, controller.state.value.snapshot?.revision)
+        assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
+        assertFalse(controller.state.value.working)
         controller.close()
     }
 

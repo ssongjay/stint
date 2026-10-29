@@ -51,6 +51,17 @@
 
 ## HTTP 계약
 
+`SET_DURATION`은 일시정지된 카운트다운의 `targetSeconds`만 변경한다.
+정확한 누적 밀리초보다 긴 목표(1초–4시간)만 허용하고 id·시작 시각·누적 시간·상태를
+유지한다. 주제 기본값이나 기록은 바꾸지 않는다. 기존 revision/commandId 트랜잭션을
+재사용하며 클라이언트는 호출 시점의 revision·타이머 id·phase를 고정한다.
+전송 대기 중 다른 기기에서 상태가 바뀌면 새 타이머에 명령을 재해석하지 않는다.
+
+시계 진행률은 서버 기준 밀리초를 사용하고 실제 수신된 값 사이만 230ms로 보간한다.
+숫자는 같은 시간 형식의 모든 숫자를 기준으로 한 번 크기를 정하며 Manrope의
+tabular 숫자를 사용한다. 전체 목표를 크기 기준에 포함해 60분 경계에서도 글자가
+커지지 않는다. 일시정지와 움직임 줄이기에서는 정확한 값으로 고정한다.
+
 - GET /health: 공개 readiness, DB 연결 확인.
 - GET /v1/snapshot: 전체 상태. Authorization: Bearer 연결 키.
 - POST /v1/timer/commands: TimerCommand.

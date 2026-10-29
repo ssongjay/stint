@@ -152,6 +152,22 @@ class StintController(
     override fun resume() = timerMutation(TimerAction.RESUME)
     override fun finish() = timerMutation(TimerAction.FINISH)
     override fun skipBreak() = timerMutation(TimerAction.SKIP_BREAK)
+    override fun setTimerDuration(targetSeconds: Int) {
+        val snapshot = _state.value.snapshot
+        if (snapshot == null) {
+            _state.update { it.copy(message = "최신 타이머를 불러온 뒤 다시 시도해 주세요.") }
+            return
+        }
+        timerMutation(
+            TimerAction.SET_DURATION,
+            targetSeconds = targetSeconds,
+            guard = TimerMutationGuard(
+                revision = snapshot.revision,
+                timerId = snapshot.timer.id,
+                phase = snapshot.timer.phase,
+            ),
+        )
+    }
 
     override fun saveSubject(subject: Subject) = launchMutation { settings, context ->
         mutate(settings, "/v1/subjects", SaveSubjectRequest(context, subject), HttpMethod.POST)
@@ -197,16 +213,21 @@ class StintController(
         subjectId: String? = null,
         mode: TimerMode = TimerMode.COUNTDOWN,
         focusSeconds: Int? = null,
-    ) = launchMutation { settings, context ->
+        targetSeconds: Int? = null,
+        guard: TimerMutationGuard? = null,
+    ) = launchMutation(guard) { settings, context ->
         mutate(
             settings,
             "/v1/timer/commands",
-            TimerCommand(context, action, subjectId, mode, focusSeconds),
+            TimerCommand(context, action, subjectId, mode, focusSeconds, targetSeconds),
             HttpMethod.POST,
         )
     }
 
-    private fun launchMutation(block: suspend (ConnectionSettings, MutationContext) -> Snapshot) {
+    private fun launchMutation(
+        guard: TimerMutationGuard? = null,
+        block: suspend (ConnectionSettings, MutationContext) -> Snapshot,
+    ) {
         if (closed) return
         val invoked = _state.value
         if (invoked.connection != ConnectionStatus.CONNECTED) {
@@ -220,9 +241,18 @@ class StintController(
                 if (generation != identityGeneration) return@withLock
                 val current = _state.value
                 val snapshot = current.snapshot ?: return@withLock
+                if (guard != null && !guard.matches(snapshot)) {
+                    _state.update {
+                        it.copy(
+                            connection = ConnectionStatus.CONNECTED,
+                            message = "다른 기기에서 타이머가 바뀌어 시간 변경을 보내지 않았어요. 다시 확인해 주세요.",
+                        )
+                    }
+                    return@withLock
+                }
                 val context = MutationContext(
                     commandId = newId(),
-                    expectedRevision = snapshot.revision,
+                    expectedRevision = guard?.revision ?: snapshot.revision,
                     deviceId = settings.deviceId,
                     deviceName = settings.deviceName,
                 )
@@ -236,6 +266,15 @@ class StintController(
                             it.copy(
                                 connection = ConnectionStatus.CONNECTED,
                                 message = "다른 기기에서 상태가 변경됐어요. 최신 상태를 불러왔습니다.",
+                            )
+                        }
+                    }
+                } catch (failure: ClientRejected) {
+                    if (generation == identityGeneration) {
+                        _state.update {
+                            it.copy(
+                                connection = ConnectionStatus.CONNECTED,
+                                message = failure.message ?: "변경 내용을 저장하지 못했어요.",
                             )
                         }
                     }
@@ -286,6 +325,10 @@ class StintController(
         if (response.status == HttpStatusCode.Conflict) {
             val error = response.body<ApiError>()
             throw RevisionConflict(error.snapshot)
+        }
+        if (response.status == HttpStatusCode.BadRequest) {
+            val message = runCatching { response.body<ApiError>().message }.getOrDefault("변경 내용을 확인해 주세요.")
+            throw ClientRejected(message)
         }
         if (!response.status.isSuccess()) {
             val message = runCatching { response.body<ApiError>().message }.getOrDefault("서버 요청이 실패했어요.")
@@ -398,7 +441,16 @@ class StintController(
     private fun url(settings: ConnectionSettings, path: String): String = settings.baseUrl + path
 
     private enum class HttpMethod { POST, PUT }
+    private data class TimerMutationGuard(
+        val revision: Long,
+        val timerId: String?,
+        val phase: dev.stint.shared.TimerPhase,
+    ) {
+        fun matches(snapshot: Snapshot): Boolean =
+            snapshot.revision == revision && snapshot.timer.id == timerId && snapshot.timer.phase == phase
+    }
     private class RevisionConflict(val snapshot: Snapshot?) : Exception()
+    private class ClientRejected(message: String) : Exception(message)
     private class RemoteFailure(message: String) : Exception(message)
 }
 

@@ -9,6 +9,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertFailsWith
 
 class TimerEngineTest {
     private val subject = Subject(
@@ -69,6 +70,27 @@ class TimerEngineTest {
 
         assertEquals(10, result.session?.durationSeconds)
         assertEquals(TimerStatus.IDLE, result.timer.status)
+    }
+
+    @Test
+    fun `changing a paused countdown duration preserves its exact progress and identity`() {
+        val paused = TimerEngine.pause(runningTimer(runningSince = 1_000, accumulated = 250), 2_125)
+
+        val changed = TimerEngine.setDuration(paused, 20)
+
+        assertEquals(paused.copy(targetSeconds = 20), changed)
+        assertEquals(1_375, changed.accumulatedMillis)
+        assertEquals("timer", changed.id)
+        assertEquals(1_000, changed.startedAtEpochMs)
+    }
+
+    @Test
+    fun `duration change rejects running stopwatch and elapsed boundary`() {
+        val paused = TimerEngine.pause(runningTimer(runningSince = 1_000), 2_125)
+
+        assertFailsWith<IllegalArgumentException> { TimerEngine.setDuration(paused.copy(status = TimerStatus.RUNNING), 20) }
+        assertFailsWith<IllegalArgumentException> { TimerEngine.setDuration(paused.copy(mode = TimerMode.STOPWATCH), 20) }
+        assertFailsWith<IllegalArgumentException> { TimerEngine.setDuration(paused, 1) }
     }
 
     private fun runningTimer(runningSince: Long, accumulated: Long = 0) = TimerState(
