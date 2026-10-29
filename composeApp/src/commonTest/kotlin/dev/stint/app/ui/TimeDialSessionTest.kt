@@ -24,15 +24,17 @@ class TimeDialSessionTest {
     )
 
     @Test fun pausedRangePreservesExactElapsedAndPhaseLimit() {
-        val timer = TimerState(status = TimerStatus.PAUSED, accumulatedMillis = 1_800_001)
+        val timer = TimerState(status = TimerStatus.PAUSED, targetSeconds = 3_600, accumulatedMillis = 1_800_001)
         val session = timeDialSession(state(timer), subject, TimerMode.COUNTDOWN)
-        assertEquals(31, session.minimumMinutes)
-        assertEquals(240, session.maximumMinutes)
+        assertEquals(1, session.minimumSeconds)
+        assertEquals(1_800, session.valueSeconds)
+        assertEquals(1_800, session.targetOffsetSeconds)
+        assertEquals(12_600, session.maximumSeconds)
         assertTrue(session.enabled)
-        assertEquals(60, timeDialSession(state(timer.copy(phase = TimerPhase.SHORT_BREAK)), subject,
-            TimerMode.COUNTDOWN).maximumMinutes)
-        assertEquals(120, timeDialSession(state(timer.copy(phase = TimerPhase.LONG_BREAK)), subject,
-            TimerMode.COUNTDOWN).maximumMinutes)
+        assertEquals(1_800, timeDialSession(state(timer.copy(phase = TimerPhase.SHORT_BREAK)), subject,
+            TimerMode.COUNTDOWN).maximumSeconds)
+        assertEquals(5_400, timeDialSession(state(timer.copy(phase = TimerPhase.LONG_BREAK)), subject,
+            TimerMode.COUNTDOWN).maximumSeconds)
     }
 
     @Test fun runningStopwatchOfflineAndExhaustedRangeCannotAdjust() {
@@ -45,6 +47,18 @@ class TimeDialSessionTest {
             accumulatedMillis = 14_400_000)), subject, TimerMode.COUNTDOWN).enabled)
         assertFalse(timeDialSession(state(TimerState(subjectId = "other", status = TimerStatus.PAUSED)),
             subject, TimerMode.COUNTDOWN).enabled)
+    }
+
+    @Test fun secondPickerChangesDisplayedRemainingWithoutDiscardingFractionalElapsed() {
+        val timer = TimerState(status = TimerStatus.PAUSED, targetSeconds = 1_517,
+            accumulatedMillis = 12_500)
+        val session = timeDialSession(state(timer), subject, TimerMode.COUNTDOWN)
+        assertEquals(1_505, session.valueSeconds)
+        val pickedRemaining = 30
+        val updatedTarget = session.targetOffsetSeconds + pickedRemaining
+        assertEquals(42, updatedTarget)
+        assertTrue(updatedTarget * 1000L > timer.accumulatedMillis)
+        assertEquals(30, updatedTarget - timer.accumulatedMillis.div(1000L).toInt())
     }
 
     @Test fun anyAuthoritativeReplacementInvalidatesGestureIdentity() {

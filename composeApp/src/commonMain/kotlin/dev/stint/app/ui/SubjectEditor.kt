@@ -1,9 +1,7 @@
 package dev.stint.app.ui
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,7 +13,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -31,7 +28,6 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -57,9 +53,15 @@ internal fun SubjectEditor(
 ) {
     var name by rememberSaveable(original?.id) { mutableStateOf(original?.name.orEmpty()) }
     var color by rememberSaveable(original?.id) { mutableStateOf(original?.colorHex ?: WorkbenchColors.first()) }
-    var focusMinutes by rememberSaveable(original?.id) { mutableStateOf(((original?.focusSeconds ?: 1500) / 60).toString()) }
-    var shortBreakMinutes by rememberSaveable(original?.id) { mutableStateOf(((original?.shortBreakSeconds ?: 300) / 60).toString()) }
-    var longBreakMinutes by rememberSaveable(original?.id) { mutableStateOf(((original?.longBreakSeconds ?: 900) / 60).toString()) }
+    val initialFocus = splitDurationSeconds(original?.focusSeconds ?: 1500)
+    val initialShortBreak = splitDurationSeconds(original?.shortBreakSeconds ?: 300)
+    val initialLongBreak = splitDurationSeconds(original?.longBreakSeconds ?: 900)
+    var focusMinutes by rememberSaveable(original?.id) { mutableStateOf(initialFocus.minutes) }
+    var focusSeconds by rememberSaveable(original?.id) { mutableStateOf(initialFocus.seconds) }
+    var shortBreakMinutes by rememberSaveable(original?.id) { mutableStateOf(initialShortBreak.minutes) }
+    var shortBreakSeconds by rememberSaveable(original?.id) { mutableStateOf(initialShortBreak.seconds) }
+    var longBreakMinutes by rememberSaveable(original?.id) { mutableStateOf(initialLongBreak.minutes) }
+    var longBreakSeconds by rememberSaveable(original?.id) { mutableStateOf(initialLongBreak.seconds) }
     var longBreakEvery by rememberSaveable(original?.id) { mutableStateOf((original?.longBreakEvery ?: 4).toString()) }
     var error by rememberSaveable(original?.id) { mutableStateOf<String?>(null) }
 
@@ -67,7 +69,7 @@ internal fun SubjectEditor(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Column(Modifier.fillMaxWidth().widthIn(max = 680.dp)) {
+        Column(Modifier.widthIn(max = 680.dp).fillMaxWidth()) {
             SectionEyebrow(if (original == null) "새 주제" else "주제 설정")
             Spacer(Modifier.height(6.dp))
             Text(if (original == null) "무엇에 머물까요" else original.name, style = MaterialTheme.typography.headlineMedium)
@@ -102,15 +104,16 @@ internal fun SubjectEditor(
             Spacer(Modifier.height(24.dp))
             Text("집중 흐름", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(14.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MinuteField("집중", focusMinutes, { focusMinutes = numeric(it); error = null }, Modifier.weight(1f))
-                MinuteField("짧은 휴식", shortBreakMinutes, { shortBreakMinutes = numeric(it); error = null }, Modifier.weight(1f))
-            }
+            DurationFieldsInput("집중", focusMinutes, focusSeconds,
+                { focusMinutes = it; error = null }, { focusSeconds = it; error = null })
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                MinuteField("긴 휴식", longBreakMinutes, { longBreakMinutes = numeric(it); error = null }, Modifier.weight(1f))
-                MinuteField("긴 휴식 간격", longBreakEvery, { longBreakEvery = numeric(it); error = null }, Modifier.weight(1f), suffix = "회")
-            }
+            DurationFieldsInput("짧은 휴식", shortBreakMinutes, shortBreakSeconds,
+                { shortBreakMinutes = it; error = null }, { shortBreakSeconds = it; error = null })
+            Spacer(Modifier.height(12.dp))
+            DurationFieldsInput("긴 휴식", longBreakMinutes, longBreakSeconds,
+                { longBreakMinutes = it; error = null }, { longBreakSeconds = it; error = null })
+            Spacer(Modifier.height(12.dp))
+            MinuteField("긴 휴식 간격", longBreakEvery, { longBreakEvery = numeric(it); error = null }, Modifier.fillMaxWidth(), suffix = "회")
             if (error != null) {
                 Spacer(Modifier.height(14.dp))
                 Text(error.orEmpty(), color = ErrorRed, style = MaterialTheme.typography.bodyMedium)
@@ -119,15 +122,15 @@ internal fun SubjectEditor(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(
                     onClick = {
-                        val focus = focusMinutes.toIntOrNull()
-                        val short = shortBreakMinutes.toIntOrNull()
-                        val long = longBreakMinutes.toIntOrNull()
+                        val focus = durationSeconds(focusMinutes, focusSeconds)
+                        val short = durationSeconds(shortBreakMinutes, shortBreakSeconds)
+                        val long = durationSeconds(longBreakMinutes, longBreakSeconds)
                         val every = longBreakEvery.toIntOrNull()
                         error = when {
                             name.isBlank() -> "주제 이름을 입력해 주세요."
-                            focus == null || focus !in 1..240 -> "집중 시간은 1분부터 240분까지 입력할 수 있어요."
-                            short == null || short !in 1..60 -> "짧은 휴식은 1분부터 60분까지 입력할 수 있어요."
-                            long == null || long !in 1..120 -> "긴 휴식은 1분부터 120분까지 입력할 수 있어요."
+                            focus == null || focus !in 1..14_400 -> "집중 시간은 1초부터 240분까지 입력할 수 있어요."
+                            short == null || short !in 1..3_600 -> "짧은 휴식은 1초부터 60분까지 입력할 수 있어요."
+                            long == null || long !in 1..7_200 -> "긴 휴식은 1초부터 120분까지 입력할 수 있어요."
                             every == null || every !in 2..12 -> "긴 휴식 간격은 2회부터 12회까지 입력할 수 있어요."
                             else -> null
                         }
@@ -137,9 +140,9 @@ internal fun SubjectEditor(
                                     id = original?.id ?: "subject-${nowEpochMs.toString(36)}",
                                     name = name.trim(),
                                     colorHex = color,
-                                    focusSeconds = focus!! * 60,
-                                    shortBreakSeconds = short!! * 60,
-                                    longBreakSeconds = long!! * 60,
+                                    focusSeconds = focus!!,
+                                    shortBreakSeconds = short!!,
+                                    longBreakSeconds = long!!,
                                     longBreakEvery = every!!,
                                     archived = original?.archived ?: false,
                                 ),

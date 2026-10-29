@@ -49,4 +49,15 @@ class TimerClockVisualTest {
 
         assertEquals((0..9).map { "$it$it:$it$it" }, samples)
     }
+
+    @Test
+    fun countdownKeepsTotalMinutesWhileStopwatchKeepsElapsedHours() {
+        assertEquals("120:00", formatTimerClockReadout(7_200, countingUp = false))
+        assertEquals("2:00:00", formatTimerClockReadout(7_200, countingUp = true))
+        assertEquals(
+            clockTimeSizingSamples("99:59", "120:00"),
+            clockTimeSizingSamples("120:00", "120:00"),
+        )
+        assertTrue(clockTimeSizingSamples("99:59", "120:00").all { it.length == "000:00".length })
+    }
 }

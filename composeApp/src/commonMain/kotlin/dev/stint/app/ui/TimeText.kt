@@ -19,12 +19,16 @@ internal fun formatTimer(totalSeconds: Int): String {
 }
 
 internal fun formatDuration(totalSeconds: Int): String {
-    val minutes = totalSeconds.coerceAtLeast(0) / 60
-    return when {
+    val safe = totalSeconds.coerceAtLeast(0)
+    val minutes = safe / 60
+    val seconds = safe % 60
+    if (minutes == 0 && seconds > 0) return "${seconds}초"
+    val wholeMinutes = when {
         minutes < 60 -> "${minutes}분"
         minutes % 60 == 0 -> "${minutes / 60}시간"
         else -> "${minutes / 60}시간 ${minutes % 60}분"
     }
+    return if (seconds == 0) wholeMinutes else "$wholeMinutes ${seconds}초"
 }
 
 @OptIn(kotlin.time.ExperimentalTime::class)

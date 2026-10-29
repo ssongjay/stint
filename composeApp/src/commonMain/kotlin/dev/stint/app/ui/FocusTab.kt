@@ -111,7 +111,7 @@ internal fun FocusTab(
                 dialSession = timeDialSession(state, activeSubject, selectedMode),
                 dialBusy = state.working,
                 dialFeedback = state.message,
-                onDialCommit = { minutes, key -> commitTimeDial(controller, activeSubject?.id, selectedMode, minutes, key) },
+                onDialCommit = { seconds, key -> commitTimeDial(controller, activeSubject?.id, selectedMode, seconds, key) },
                 onDialAdjustingChange = { dialAdjusting = it },
                 onMode = { selectedModeName = it.name },
                 onStart = { activeSubject?.let { controller.start(it.id, selectedMode, if (selectedMode == TimerMode.COUNTDOWN) it.focusSeconds else null) } },
@@ -262,7 +262,7 @@ private fun TabletopFocus(
                 dialSession = timeDialSession(state, activeSubject, selectedMode),
                 dialBusy = state.working,
                 dialFeedback = state.message,
-                onDialCommit = { minutes, key -> commitTimeDial(controller, activeSubject?.id, selectedMode, minutes, key) },
+                onDialCommit = { seconds, key -> commitTimeDial(controller, activeSubject?.id, selectedMode, seconds, key) },
                 onDialAdjustingChange = onDialAdjustingChange,
             )
         }
@@ -422,28 +422,30 @@ private fun TimerReadout(
     }
     if (shownMode == TimerMode.COUNTDOWN) {
         ClockTimeDial(
-            valueMinutes = dialSession.valueMinutes,
-            minimumMinutes = dialSession.minimumMinutes,
-            maximumMinutes = dialSession.maximumMinutes,
+            valueSeconds = dialSession.valueSeconds,
+            minimumSeconds = dialSession.minimumSeconds,
+            maximumSeconds = dialSession.maximumSeconds,
             enabled = dialSession.enabled,
             interactionKey = dialSession.interactionKey,
             busy = dialBusy,
             feedbackMessage = dialFeedback,
             onCommit = onDialCommit,
             height = clockHeight,
-            compact = !showTimeSettings,
-        onAdjustingChange = onDialAdjustingChange,
-        ) { previewMinutes, faceHeight ->
-            val previewTarget = previewMinutes?.times(60)
+            onAdjustingChange = onDialAdjustingChange,
+        ) { previewSeconds, faceHeight, timeContent ->
+            val offset = if (status == TimerStatus.IDLE) 0 else (elapsed / 1000L).toInt()
+            val previewTarget = previewSeconds?.plus(offset)
             TimerClockVisual(
                 style = clockStyle,
                 reading = if (previewTarget != null) countdownClockReadingMillis(
-                    previewTarget * 1000L, previewTarget * 1000L,
+                    (previewTarget * 1000L - elapsed).coerceAtLeast(0), previewTarget * 1000L,
                 ) else reading,
                 running = previewTarget == null && status == TimerStatus.RUNNING,
                 height = faceHeight,
-                sizingReferenceSeconds = maxOf(target, previewTarget ?: 0),
-                readoutLabel = if (previewTarget != null) "전체 목표" else null,
+                sizingReferenceSeconds = maxOf(target, previewTarget ?: 0,
+                    dialSession.maximumSeconds + dialSession.targetOffsetSeconds),
+                readoutLabel = if (previewTarget != null) "시간 조절" else null,
+                timeContent = timeContent,
             )
         }
     } else {

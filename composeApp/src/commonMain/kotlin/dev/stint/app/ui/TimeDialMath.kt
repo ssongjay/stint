@@ -2,49 +2,81 @@ package dev.stint.app.ui
 
 import kotlin.math.roundToInt
 
-internal const val TIME_DIAL_FLING_PROJECTION_SECONDS = .12f
+internal const val TIME_WHEEL_FLING_PROJECTION_SECONDS = .12f
 
-internal fun clampDialValue(value: Float, minimum: Int, maximum: Int): Float =
+internal data class TimeWheelValues(val minutes: Int, val seconds: Int) {
+    val totalSeconds: Int get() = minutes * 60 + seconds
+}
+
+internal fun timeWheelFieldWeights(maximumSeconds: Int): Pair<Float, Float> =
+    (maximumSeconds.coerceAtLeast(0) / 60).toString().length.coerceAtLeast(2).toFloat() to 2f
+
+internal fun timeWheelSecondRange(
+    totalSeconds: Int,
+    minimumSeconds: Int,
+    maximumSeconds: Int,
+): IntRange {
+    val minute = splitTimeWheelSeconds(totalSeconds.coerceIn(minimumSeconds, maximumSeconds)).minutes
+    val minimum = if (minute == minimumSeconds / 60) minimumSeconds % 60 else 0
+    val maximum = if (minute == maximumSeconds / 60) maximumSeconds % 60 else 59
+    return minimum.coerceAtMost(maximum)..maximum
+}
+
+internal fun splitTimeWheelSeconds(totalSeconds: Int): TimeWheelValues {
+    val safe = totalSeconds.coerceAtLeast(0)
+    return TimeWheelValues(minutes = safe / 60, seconds = safe % 60)
+}
+
+internal fun combineTimeWheelSeconds(
+    minutes: Int,
+    seconds: Int,
+    minimumSeconds: Int,
+    maximumSeconds: Int,
+): Int = (minutes.coerceAtLeast(0) * 60L + seconds.coerceIn(0, 59))
+    .coerceIn(minimumSeconds.toLong(), maximumSeconds.toLong())
+    .toInt()
+
+internal fun clampWheelValue(value: Float, minimum: Int, maximum: Int): Float =
     value.coerceIn(minimum.toFloat(), maximum.toFloat())
 
-/** Dragging left advances the dial; dragging right rewinds it. */
-internal fun dialValueAfterDrag(
-    startMinutes: Float,
-    dragPixels: Float,
-    pixelsPerMinute: Float,
+/** Dragging up advances a field; dragging down rewinds it. */
+internal fun wheelValueAfterVerticalDrag(
+    startValue: Float,
+    dragPixelsY: Float,
+    pixelsPerStep: Float,
     minimum: Int,
     maximum: Int,
-): Float = clampDialValue(
-    startMinutes - dragPixels / pixelsPerMinute.coerceAtLeast(1f),
+): Float = clampWheelValue(
+    startValue - dragPixelsY / pixelsPerStep.coerceAtLeast(1f),
     minimum,
     maximum,
 )
 
-/** Compose reports wheel/trackpad scroll in logical scroll units, not screen pixels. */
-internal fun dialValueAfterScroll(
-    startMinutes: Float,
+/** Compose reports wheel/trackpad movement in logical scroll units, not screen pixels. */
+internal fun wheelValueAfterScroll(
+    startValue: Float,
     scrollUnits: Float,
     minimum: Int,
     maximum: Int,
-): Float = clampDialValue(startMinutes - scrollUnits, minimum, maximum)
+): Float = clampWheelValue(startValue - scrollUnits, minimum, maximum)
 
-internal fun projectedDialValue(
-    currentMinutes: Float,
-    horizontalVelocityPixelsPerSecond: Float,
-    pixelsPerMinute: Float,
+internal fun projectedWheelValue(
+    currentValue: Float,
+    verticalVelocityPixelsPerSecond: Float,
+    pixelsPerStep: Float,
     minimum: Int,
     maximum: Int,
-): Float = clampDialValue(
-    currentMinutes - horizontalVelocityPixelsPerSecond * TIME_DIAL_FLING_PROJECTION_SECONDS /
-        pixelsPerMinute.coerceAtLeast(1f),
+): Float = clampWheelValue(
+    currentValue - verticalVelocityPixelsPerSecond * TIME_WHEEL_FLING_PROJECTION_SECONDS /
+        pixelsPerStep.coerceAtLeast(1f),
     minimum,
     maximum,
 )
 
-internal fun snappedDialMinutes(value: Float, minimum: Int, maximum: Int): Int =
+internal fun snappedWheelValue(value: Float, minimum: Int, maximum: Int): Int =
     value.roundToInt().coerceIn(minimum, maximum)
 
-internal fun dialEaseOutQuart(fraction: Float): Float {
+internal fun wheelEaseOutQuart(fraction: Float): Float {
     val tail = 1f - fraction.coerceIn(0f, 1f)
     return 1f - tail * tail * tail * tail
 }

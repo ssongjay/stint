@@ -53,23 +53,27 @@ internal fun TimeSettingsPanel(
 ) {
     val timer = state.snapshot?.timer ?: TimerState()
     val canMutate = state.connection == ConnectionStatus.CONNECTED && !state.working
-    val currentMaxMinutes = when (timer.phase) {
-        TimerPhase.FOCUS -> 240
-        TimerPhase.SHORT_BREAK -> 60
-        TimerPhase.LONG_BREAK -> 120
+    val currentMaxSeconds = when (timer.phase) {
+        TimerPhase.FOCUS -> 240 * 60
+        TimerPhase.SHORT_BREAK -> 60 * 60
+        TimerPhase.LONG_BREAK -> 120 * 60
     }
+    val initialCurrent = splitDurationSeconds(timer.targetSeconds.coerceAtLeast(1))
     var currentMinutes by rememberSaveable(timer.id, timer.status) {
-        mutableStateOf((timer.targetSeconds / 60).coerceAtLeast(1).toString())
+        mutableStateOf(initialCurrent.minutes)
     }
-    var focusMinutes by rememberSaveable(subject?.id) {
-        mutableStateOf(((subject?.focusSeconds ?: 1500) / 60).toString())
+    var currentSeconds by rememberSaveable(timer.id, timer.status) {
+        mutableStateOf(initialCurrent.seconds)
     }
-    var shortBreakMinutes by rememberSaveable(subject?.id) {
-        mutableStateOf(((subject?.shortBreakSeconds ?: 300) / 60).toString())
-    }
-    var longBreakMinutes by rememberSaveable(subject?.id) {
-        mutableStateOf(((subject?.longBreakSeconds ?: 900) / 60).toString())
-    }
+    val initialFocus = splitDurationSeconds(subject?.focusSeconds ?: 1500)
+    val initialShortBreak = splitDurationSeconds(subject?.shortBreakSeconds ?: 300)
+    val initialLongBreak = splitDurationSeconds(subject?.longBreakSeconds ?: 900)
+    var focusMinutes by rememberSaveable(subject?.id) { mutableStateOf(initialFocus.minutes) }
+    var focusSeconds by rememberSaveable(subject?.id) { mutableStateOf(initialFocus.seconds) }
+    var shortBreakMinutes by rememberSaveable(subject?.id) { mutableStateOf(initialShortBreak.minutes) }
+    var shortBreakSeconds by rememberSaveable(subject?.id) { mutableStateOf(initialShortBreak.seconds) }
+    var longBreakMinutes by rememberSaveable(subject?.id) { mutableStateOf(initialLongBreak.minutes) }
+    var longBreakSeconds by rememberSaveable(subject?.id) { mutableStateOf(initialLongBreak.seconds) }
     var longBreakEvery by rememberSaveable(subject?.id) {
         mutableStateOf((subject?.longBreakEvery ?: 4).toString())
     }
@@ -121,24 +125,28 @@ internal fun TimeSettingsPanel(
                 timer = timer,
                 nowEpochMs = nowEpochMs,
                 minutes = currentMinutes,
-                maxMinutes = currentMaxMinutes,
+                seconds = currentSeconds,
+                maxSeconds = currentMaxSeconds,
                 canMutate = canMutate,
                 saving = pendingCurrentSeconds != null && state.working,
                 error = currentError,
                 onMinutes = {
-                    currentMinutes = durationDigits(it)
+                    currentMinutes = durationMinuteDigits(it)
+                    currentError = null
+                },
+                onSeconds = {
+                    currentSeconds = durationSecondDigits(it)
                     currentError = null
                 },
                 onPause = onPause,
                 onSave = {
-                    val minutes = currentMinutes.toIntOrNull()
-                    currentError = currentDurationError(minutes, currentMaxMinutes, timer.elapsedMillis(nowEpochMs))
+                    val requestedSeconds = durationSeconds(currentMinutes, currentSeconds)
+                    currentError = currentDurationError(requestedSeconds, currentMaxSeconds, timer.elapsedMillis(nowEpochMs))
                     if (currentError == null) {
-                        val seconds = minutes!! * 60
-                        if (seconds == timer.targetSeconds) onClose()
+                        if (requestedSeconds == timer.targetSeconds) onClose()
                         else {
-                            pendingCurrentSeconds = seconds
-                            onSaveCurrent(seconds)
+                            pendingCurrentSeconds = requestedSeconds
+                            onSaveCurrent(requestedSeconds!!)
                         }
                     }
                 },
@@ -157,21 +165,28 @@ internal fun TimeSettingsPanel(
             Spacer(Modifier.height(18.dp))
             Presets(
                 values = listOf(15, 25, 45, 60),
-                selected = focusMinutes.toIntOrNull(),
+                selectedSeconds = durationSeconds(focusMinutes, focusSeconds),
                 enabled = canMutate,
-                onSelect = { focusMinutes = it.toString(); defaultsError = null },
+                onSelect = {
+                    focusMinutes = it.toString()
+                    focusSeconds = "00"
+                    defaultsError = null
+                },
             )
             Spacer(Modifier.height(10.dp))
-            MinuteInput("집중", focusMinutes, { focusMinutes = durationDigits(it); defaultsError = null }, enabled = canMutate)
+            DurationFieldsInput("집중", focusMinutes, focusSeconds,
+                { focusMinutes = it; defaultsError = null }, { focusSeconds = it; defaultsError = null }, enabled = canMutate)
             Spacer(Modifier.height(12.dp))
-            MinuteInput("짧은 휴식", shortBreakMinutes, { shortBreakMinutes = durationDigits(it); defaultsError = null }, enabled = canMutate)
+            DurationFieldsInput("짧은 휴식", shortBreakMinutes, shortBreakSeconds,
+                { shortBreakMinutes = it; defaultsError = null }, { shortBreakSeconds = it; defaultsError = null }, enabled = canMutate)
             Spacer(Modifier.height(12.dp))
-            MinuteInput("긴 휴식", longBreakMinutes, { longBreakMinutes = durationDigits(it); defaultsError = null }, enabled = canMutate)
+            DurationFieldsInput("긴 휴식", longBreakMinutes, longBreakSeconds,
+                { longBreakMinutes = it; defaultsError = null }, { longBreakSeconds = it; defaultsError = null }, enabled = canMutate)
             Spacer(Modifier.height(12.dp))
             MinuteInput(
                 label = "긴 휴식 간격",
                 value = longBreakEvery,
-                onValue = { longBreakEvery = durationDigits(it); defaultsError = null },
+                onValue = { longBreakEvery = durationMinuteDigits(it); defaultsError = null },
                 suffix = "회",
                 enabled = canMutate,
             )
@@ -182,16 +197,16 @@ internal fun TimeSettingsPanel(
             Spacer(Modifier.height(20.dp))
             Button(
                 onClick = {
-                    val focus = focusMinutes.toIntOrNull()
-                    val short = shortBreakMinutes.toIntOrNull()
-                    val long = longBreakMinutes.toIntOrNull()
+                    val focus = durationSeconds(focusMinutes, focusSeconds)
+                    val short = durationSeconds(shortBreakMinutes, shortBreakSeconds)
+                    val long = durationSeconds(longBreakMinutes, longBreakSeconds)
                     val every = longBreakEvery.toIntOrNull()
                     defaultsError = defaultDurationError(focus, short, long, every)
                     if (defaultsError == null && subject != null) {
                         val requested = subject.copy(
-                            focusSeconds = focus!! * 60,
-                            shortBreakSeconds = short!! * 60,
-                            longBreakSeconds = long!! * 60,
+                            focusSeconds = focus!!,
+                            shortBreakSeconds = short!!,
+                            longBreakSeconds = long!!,
                             longBreakEvery = every!!,
                         )
                         if (subject.hasSameTimeDefaults(requested)) onClose()
@@ -219,11 +234,13 @@ private fun CurrentTimerSettings(
     timer: TimerState,
     nowEpochMs: Long,
     minutes: String,
-    maxMinutes: Int,
+    seconds: String,
+    maxSeconds: Int,
     canMutate: Boolean,
     saving: Boolean,
     error: String?,
     onMinutes: (String) -> Unit,
+    onSeconds: (String) -> Unit,
     onPause: () -> Unit,
     onSave: () -> Unit,
 ) {
@@ -261,12 +278,12 @@ private fun CurrentTimerSettings(
             Spacer(Modifier.height(14.dp))
             Presets(
                 values = presetsFor(timer.phase),
-                selected = minutes.toIntOrNull(),
+                selectedSeconds = durationSeconds(minutes, seconds),
                 enabled = canMutate,
-                onSelect = { onMinutes(it.toString()) },
+                onSelect = { onMinutes(it.toString()); onSeconds("00") },
             )
             Spacer(Modifier.height(10.dp))
-            MinuteInput("전체 목표", minutes, onMinutes, enabled = canMutate)
+            DurationFieldsInput("전체 목표", minutes, seconds, onMinutes, onSeconds, enabled = canMutate)
             Text(
                 "경과 ${formatTimer((timer.elapsedMillis(nowEpochMs) / 1000L).toInt())}",
                 color = InkMuted,
@@ -284,7 +301,7 @@ private fun CurrentTimerSettings(
                 shape = RoundedCornerShape(8.dp),
             ) { Text(if (saving) "저장 중…" else "이번 목표 저장") }
             Text(
-                "${maxMinutes}분까지 설정할 수 있어요.",
+                "${maxSeconds / 60}분까지 설정할 수 있어요.",
                 color = InkMuted,
                 style = MaterialTheme.typography.labelSmall,
             )
@@ -293,7 +310,7 @@ private fun CurrentTimerSettings(
 }
 
 @Composable
-private fun Presets(values: List<Int>, selected: Int?, enabled: Boolean = true, onSelect: (Int) -> Unit) {
+private fun Presets(values: List<Int>, selectedSeconds: Int?, enabled: Boolean = true, onSelect: (Int) -> Unit) {
     Row(
         Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -304,7 +321,7 @@ private fun Presets(values: List<Int>, selected: Int?, enabled: Boolean = true, 
                 enabled = enabled,
                 modifier = Modifier.heightIn(min = 48.dp),
                 shape = RoundedCornerShape(50),
-            ) { Text(if (selected == minutes) "${minutes}분 ✓" else "${minutes}분") }
+            ) { Text(if (selectedSeconds == minutes * 60) "${minutes}분 ✓" else "${minutes}분") }
         }
     }
 }
@@ -329,21 +346,19 @@ private fun MinuteInput(
     )
 }
 
-internal fun currentDurationError(minutes: Int?, maxMinutes: Int, elapsedMillis: Long): String? = when {
-    minutes == null || minutes !in 1..maxMinutes -> "전체 목표는 1분부터 ${maxMinutes}분까지 입력할 수 있어요."
-    minutes * 60_000L <= elapsedMillis -> "이미 지난 시간보다 길게 설정해 주세요."
+internal fun currentDurationError(totalSeconds: Int?, maxSeconds: Int, elapsedMillis: Long): String? = when {
+    totalSeconds == null || totalSeconds !in 1..maxSeconds -> "전체 목표는 1초부터 ${maxSeconds / 60}분까지 입력할 수 있어요."
+    totalSeconds * 1000L <= elapsedMillis -> "이미 지난 시간보다 길게 설정해 주세요."
     else -> null
 }
 
 internal fun defaultDurationError(focus: Int?, short: Int?, long: Int?, every: Int?): String? = when {
-    focus == null || focus !in 1..240 -> "집중 시간은 1분부터 240분까지 입력할 수 있어요."
-    short == null || short !in 1..60 -> "짧은 휴식은 1분부터 60분까지 입력할 수 있어요."
-    long == null || long !in 1..120 -> "긴 휴식은 1분부터 120분까지 입력할 수 있어요."
+    focus == null || focus !in 1..14_400 -> "집중 시간은 1초부터 240분까지 입력할 수 있어요."
+    short == null || short !in 1..3_600 -> "짧은 휴식은 1초부터 60분까지 입력할 수 있어요."
+    long == null || long !in 1..7_200 -> "긴 휴식은 1초부터 120분까지 입력할 수 있어요."
     every == null || every !in 2..12 -> "긴 휴식 간격은 2회부터 12회까지 입력할 수 있어요."
     else -> null
 }
-
-private fun durationDigits(value: String): String = value.filter(Char::isDigit).take(3)
 
 private fun presetsFor(phase: TimerPhase): List<Int> = when (phase) {
     TimerPhase.FOCUS -> listOf(15, 25, 45, 60)

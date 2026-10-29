@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -60,6 +61,8 @@ import kotlin.math.sin
 private val SandGold = Color(0xFFAE7B49)
 private val SandDark = Color(0xFF755B3B)
 
+internal typealias ClockTimeContent = @Composable BoxScope.(TextStyle) -> Unit
+
 @Composable
 internal fun TimerClockVisual(
     style: TimerClockStyle,
@@ -69,10 +72,11 @@ internal fun TimerClockVisual(
     height: Dp = 260.dp,
     sizingReferenceSeconds: Int = reading.valueSeconds,
     readoutLabel: String? = null,
+    timeContent: ClockTimeContent? = null,
 ) {
     val label = readoutLabel ?: if (reading.countingUp) "경과 시간" else "남은 시간"
     val renderedReading = animatedClockReading(reading, running)
-    val sizingReferenceTime = formatClockTime(sizingReferenceSeconds)
+    val sizingReferenceTime = formatTimerClockReadout(sizingReferenceSeconds, reading.countingUp)
     val caption = buildString {
         append(if (style == TimerClockStyle.ORBIT) "한 바퀴 60분" else "모래 전체 60분")
         if (reading.extraHours > 0) append(" · +${reading.extraHours}시간")
@@ -84,6 +88,7 @@ internal fun TimerClockVisual(
             label = label,
             caption = caption,
             sizingReferenceTime = sizingReferenceTime,
+            timeContent = timeContent,
             modifier = modifier.fillMaxWidth().height(height),
         )
         TimerClockStyle.HOURGLASS -> HourglassClock(
@@ -93,6 +98,7 @@ internal fun TimerClockVisual(
             label = label,
             caption = caption,
             sizingReferenceTime = sizingReferenceTime,
+            timeContent = timeContent,
             modifier = modifier.fillMaxWidth().height(height),
         )
     }
@@ -105,9 +111,10 @@ private fun OrbitClock(
     label: String,
     caption: String,
     sizingReferenceTime: String,
+    timeContent: ClockTimeContent?,
     modifier: Modifier,
 ) {
-    val time = formatClockTime(reading.valueSeconds)
+    val time = formatTimerClockReadout(reading.valueSeconds, reading.countingUp)
     Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val diameter = minOf(maxWidth, maxHeight)
@@ -180,6 +187,7 @@ private fun OrbitClock(
                                 if (showDetails) (centerHeight - detailHeight).coerceAtLeast(1.dp) else centerHeight,
                             ),
                             sizingReferenceTime = sizingReferenceTime,
+                            content = timeContent,
                         )
                         if (showDetails) {
                             Spacer(Modifier.height(3.dp))
@@ -206,9 +214,10 @@ private fun HourglassClock(
     label: String,
     caption: String,
     sizingReferenceTime: String,
+    timeContent: ClockTimeContent?,
     modifier: Modifier,
 ) {
-    val time = formatClockTime(reading.valueSeconds)
+    val time = formatTimerClockReadout(reading.valueSeconds, reading.countingUp)
     val phase = animatedSandPhase(
         running && reading.upperSandFraction > 0f && reading.lowerSandFraction < 1f,
     )
@@ -233,6 +242,7 @@ private fun HourglassClock(
                         alignStart = true,
                         timeHeight = timeHeight,
                         sizingReferenceTime = sizingReferenceTime,
+                        timeContent = timeContent,
                     )
                 }
             } else {
@@ -246,6 +256,7 @@ private fun HourglassClock(
                         alignStart = false,
                         timeHeight = timeHeight,
                         sizingReferenceTime = sizingReferenceTime,
+                        timeContent = timeContent,
                     )
                     HourglassDrawing(
                         reading = reading,
@@ -268,6 +279,7 @@ private fun ClockReadout(
     alignStart: Boolean,
     timeHeight: Dp,
     sizingReferenceTime: String,
+    timeContent: ClockTimeContent?,
 ) {
     BoxWithConstraints(modifier) {
         val fontScale = LocalDensity.current.fontScale
@@ -289,6 +301,7 @@ private fun ClockReadout(
                 Modifier.fillMaxWidth().height(effectiveTimeHeight),
                 if (alignStart) TextAlign.Start else TextAlign.Center,
                 sizingReferenceTime,
+                timeContent,
             )
             if (showDetails) {
                 Text(
@@ -321,6 +334,7 @@ private fun FittedClockTime(
     modifier: Modifier,
     textAlign: TextAlign = TextAlign.Center,
     sizingReferenceTime: String = time,
+    content: ClockTimeContent? = null,
 ) {
     val measurer = rememberTextMeasurer()
     val base = MaterialTheme.typography.displayLarge
@@ -351,18 +365,23 @@ private fun FittedClockTime(
             }
             low.sp
         }
-        Text(
-            time,
-            modifier = Modifier.fillMaxWidth(),
-            color = Ink,
-            style = base.copy(
-                fontSize = fontSize,
-                lineHeight = fontSize * 1.08f,
-                fontFeatureSettings = "tnum",
-            ),
-            maxLines = 1,
-            textAlign = textAlign,
+        val fittedStyle = base.copy(
+            fontSize = fontSize,
+            lineHeight = fontSize * 1.08f,
+            fontFeatureSettings = "tnum",
         )
+        if (content == null) {
+            Text(
+                time,
+                modifier = Modifier.fillMaxWidth(),
+                color = Ink,
+                style = fittedStyle,
+                maxLines = 1,
+                textAlign = textAlign,
+            )
+        } else {
+            content(fittedStyle)
+        }
     }
 }
 
@@ -374,11 +393,20 @@ internal fun clockTimeSizingSamples(time: String, sizingReferenceTime: String = 
     val sizingFormat = if (sizingReferenceTime.length >= time.length) sizingReferenceTime else time
     val hasHours = sizingFormat.count { it == ':' } >= 2
     val hourDigits = if (hasHours) sizingFormat.indexOf(':').coerceAtLeast(1) else 0
+    val minuteDigits = if (hasHours) 0 else sizingFormat.indexOf(':').coerceAtLeast(2)
     return (0..9).map { digit ->
         val value = digit.toString()
         if (hasHours) value.repeat(hourDigits) + ":" + value.repeat(2) + ":" + value.repeat(2)
-        else value.repeat(2) + ":" + value.repeat(2)
+        else value.repeat(minuteDigits) + ":" + value.repeat(2)
     }
+}
+
+/** Countdown editing uses total minutes; stopwatch keeps its elapsed-hour representation. */
+internal fun formatTimerClockReadout(seconds: Int, countingUp: Boolean): String {
+    val safe = seconds.coerceAtLeast(0)
+    if (countingUp) return formatClockTime(safe)
+    val minutes = safe / 60
+    return "${minutes.toString().padStart(2, '0')}:${(safe % 60).toString().padStart(2, '0')}"
 }
 
 private data class ClockFractions(
