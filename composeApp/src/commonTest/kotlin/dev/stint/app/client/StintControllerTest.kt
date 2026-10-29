@@ -4,6 +4,7 @@ import dev.stint.shared.ApiError
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.ConnectionStatus
 import dev.stint.shared.LocalStore
+import dev.stint.shared.SaveSubjectRequest
 import dev.stint.shared.Snapshot
 import dev.stint.shared.Subject
 import dev.stint.shared.TimerState
@@ -169,6 +170,31 @@ class StintControllerTest {
     }
 
     @Test
+    fun `stale paused duration intent is rejected without a timer request`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 3, status = TimerStatus.PAUSED)
+        var timerRequests = 0
+        val controller = StintController(
+            client = client { request ->
+                if (request.url.encodedPath.endsWith("/timer/commands")) timerRequests += 1
+                jsonResponse(initial)
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "duration-command" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+
+        controller.setTimerDuration(1_200, expectedRevision = 2)
+
+        assertEquals(0, timerRequests)
+        assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
+        assertTrue(controller.state.value.message.orEmpty().contains("다른 기기"))
+        assertFalse(controller.state.value.working)
+        controller.close()
+    }
+
+    @Test
     fun `authentication rejection is not treated as a local validation error`() = runBlocking {
         val initial = snapshot(serverNow = 1_000L, revision = 3, status = TimerStatus.PAUSED)
         var mutationCount = 0
@@ -251,6 +277,124 @@ class StintControllerTest {
         assertEquals(2, controller.state.value.snapshot?.revision)
         assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
         assertFalse(controller.state.value.working)
+        controller.close()
+    }
+
+    @Test
+    fun `stale idle focus duration is rejected without a subject request`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 3)
+        var subjectRequests = 0
+        val controller = StintController(
+            client = client { request ->
+                if (request.url.encodedPath.endsWith("/subjects")) subjectRequests += 1
+                jsonResponse(initial)
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "command" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+
+        controller.setSubjectFocusDuration("study", 1_800, expectedRevision = 2)
+
+        assertEquals(0, subjectRequests)
+        assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
+        assertTrue(controller.state.value.message.orEmpty().contains("다른 기기"))
+        controller.close()
+    }
+
+    @Test
+    fun `idle focus duration preserves the subject and pins its context revision`() = runBlocking {
+        val subject = Subject(
+            id = "study",
+            name = "알고리즘",
+            colorHex = "B9684C",
+            focusSeconds = 1_500,
+            shortBreakSeconds = 420,
+            longBreakSeconds = 1_200,
+            longBreakEvery = 3,
+        )
+        val initial = snapshot(serverNow = 1_000L, revision = 3).copy(subjects = listOf(subject))
+        val updated = initial.copy(revision = 4, subjects = listOf(subject.copy(focusSeconds = 1_800)))
+        var saved: SaveSubjectRequest? = null
+        val controller = StintController(
+            client = client { request ->
+                if (request.url.encodedPath.endsWith("/subjects")) {
+                    val body = when (val outgoing = request.body) {
+                        is TextContent -> outgoing.text
+                        is OutgoingContent.ByteArrayContent -> outgoing.bytes().decodeToString()
+                        else -> outgoing.toString()
+                    }
+                    saved = json.decodeFromString<SaveSubjectRequest>(body)
+                    jsonResponse(updated)
+                } else {
+                    jsonResponse(initial)
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "focus-duration" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+
+        controller.setSubjectFocusDuration("study", 1_800, expectedRevision = 3)
+        withTimeout(2_000) { controller.state.first { it.snapshot?.revision == 4L } }
+
+        assertEquals(3, saved?.context?.expectedRevision)
+        assertEquals(subject.copy(focusSeconds = 1_800), saved?.subject)
+        assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
+        controller.close()
+    }
+
+    @Test
+    fun `queued idle focus duration does not apply after timer and subject replacement`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 1).copy(
+            timer = TimerState(id = "timer-a", subjectId = "study", status = TimerStatus.IDLE),
+        )
+        val replaced = initial.copy(
+            serverNowEpochMs = 1_100L,
+            revision = 2,
+            subjects = listOf(initial.subjects.single().copy(name = "다른 기기에서 수정")),
+            timer = initial.timer.copy(id = "timer-b"),
+        )
+        val blockerStarted = CompletableDeferred<Unit>()
+        val releaseBlocker = CompletableDeferred<Unit>()
+        var subjectRequests = 0
+        val controller = StintController(
+            client = client { request ->
+                when {
+                    request.url.encodedPath.endsWith("/timer/commands") -> {
+                        blockerStarted.complete(Unit)
+                        releaseBlocker.await()
+                        jsonResponse(replaced)
+                    }
+                    request.url.encodedPath.endsWith("/subjects") -> {
+                        subjectRequests += 1
+                        jsonResponse(replaced)
+                    }
+                    else -> jsonResponse(initial)
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "command" },
+            realtimeEnabled = false,
+        )
+        withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+
+        controller.pause()
+        withTimeout(2_000) { blockerStarted.await() }
+        controller.setSubjectFocusDuration("study", 1_800, expectedRevision = 1)
+        releaseBlocker.complete(Unit)
+        withTimeout(2_000) { controller.state.first { it.message?.contains("시간 변경을 보내지 않았어요") == true } }
+
+        assertEquals(0, subjectRequests)
+        assertEquals("timer-b", controller.state.value.snapshot?.timer?.id)
+        assertEquals("다른 기기에서 수정", controller.state.value.snapshot?.subjects?.single()?.name)
+        assertEquals(2, controller.state.value.snapshot?.revision)
+        assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
         controller.close()
     }
 

@@ -15,6 +15,7 @@ import dev.stint.shared.TimerAction
 import dev.stint.shared.TimerClockStyle
 import dev.stint.shared.TimerCommand
 import dev.stint.shared.TimerMode
+import dev.stint.shared.TimerStatus
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.plugins.websocket.webSocket
@@ -152,21 +153,68 @@ class StintController(
     override fun resume() = timerMutation(TimerAction.RESUME)
     override fun finish() = timerMutation(TimerAction.FINISH)
     override fun skipBreak() = timerMutation(TimerAction.SKIP_BREAK)
-    override fun setTimerDuration(targetSeconds: Int) {
+    override fun setTimerDuration(targetSeconds: Int, expectedRevision: Long?) {
         val snapshot = _state.value.snapshot
         if (snapshot == null) {
             _state.update { it.copy(message = "최신 타이머를 불러온 뒤 다시 시도해 주세요.") }
+            return
+        }
+        if (expectedRevision != null && snapshot.revision != expectedRevision) {
+            _state.update { it.copy(message = "다른 기기에서 상태가 변경됐어요. 시간을 다시 확인해 주세요.") }
             return
         }
         timerMutation(
             TimerAction.SET_DURATION,
             targetSeconds = targetSeconds,
             guard = TimerMutationGuard(
-                revision = snapshot.revision,
+                revision = expectedRevision ?: snapshot.revision,
                 timerId = snapshot.timer.id,
                 phase = snapshot.timer.phase,
             ),
         )
+    }
+
+    override fun setSubjectFocusDuration(subjectId: String, targetSeconds: Int, expectedRevision: Long) {
+        val invoked = _state.value
+        if (invoked.connection != ConnectionStatus.CONNECTED) {
+            _state.update { it.copy(message = "연결이 복구된 뒤 다시 시도해 주세요.") }
+            return
+        }
+        val snapshot = invoked.snapshot
+        if (snapshot == null) {
+            _state.update { it.copy(message = "최신 타이머를 불러온 뒤 다시 시도해 주세요.") }
+            return
+        }
+        if (snapshot.revision != expectedRevision) {
+            _state.update { it.copy(message = "다른 기기에서 상태가 변경됐어요. 시간을 다시 확인해 주세요.") }
+            return
+        }
+        if (snapshot.timer.status != TimerStatus.IDLE) {
+            _state.update { it.copy(message = "진행 중인 타이머를 마친 뒤 기본 시간을 바꿀 수 있어요.") }
+            return
+        }
+        val subject = snapshot.subjects.firstOrNull { it.id == subjectId && !it.archived }
+        if (subject == null) {
+            _state.update { it.copy(message = "선택한 주제를 찾지 못했어요. 다시 확인해 주세요.") }
+            return
+        }
+        if (targetSeconds !in 1..14_400) {
+            _state.update { it.copy(message = "집중 시간은 1초부터 4시간까지 설정할 수 있어요.") }
+            return
+        }
+        val guard = TimerMutationGuard(
+            revision = snapshot.revision,
+            timerId = snapshot.timer.id,
+            phase = snapshot.timer.phase,
+        )
+        launchMutation(guard) { settings, context ->
+            mutate(
+                settings,
+                "/v1/subjects",
+                SaveSubjectRequest(context, subject.copy(focusSeconds = targetSeconds)),
+                HttpMethod.POST,
+            )
+        }
     }
 
     override fun saveSubject(subject: Subject) = launchMutation { settings, context ->
@@ -245,7 +293,7 @@ class StintController(
                     _state.update {
                         it.copy(
                             connection = ConnectionStatus.CONNECTED,
-                            message = "다른 기기에서 타이머가 바뀌어 시간 변경을 보내지 않았어요. 다시 확인해 주세요.",
+                            message = "다른 기기에서 상태가 바뀌어 시간 변경을 보내지 않았어요. 다시 확인해 주세요.",
                         )
                     }
                     return@withLock

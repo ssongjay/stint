@@ -68,8 +68,9 @@ internal fun TimerClockVisual(
     modifier: Modifier = Modifier,
     height: Dp = 260.dp,
     sizingReferenceSeconds: Int = reading.valueSeconds,
+    readoutLabel: String? = null,
 ) {
-    val label = if (reading.countingUp) "경과 시간" else "남은 시간"
+    val label = readoutLabel ?: if (reading.countingUp) "경과 시간" else "남은 시간"
     val renderedReading = animatedClockReading(reading, running)
     val sizingReferenceTime = formatClockTime(sizingReferenceSeconds)
     val caption = buildString {

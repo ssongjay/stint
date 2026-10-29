@@ -175,7 +175,7 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
                         subject = timeSubject,
                         nowEpochMs = tickNow,
                         onPause = controller::pause,
-                        onSaveCurrent = controller::setTimerDuration,
+                        onSaveCurrent = { controller.setTimerDuration(it, state.snapshot?.revision) },
                         onSaveDefaults = controller::saveSubject,
                         onClose = { panelName = SidePanel.NONE.name },
                     )

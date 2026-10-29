@@ -81,22 +81,24 @@ internal fun FocusTab(
     var selectedModeName by rememberSaveable { mutableStateOf(TimerMode.COUNTDOWN.name) }
     val selectedMode = TimerMode.entries.firstOrNull { it.name == selectedModeName } ?: TimerMode.COUNTDOWN
     val connected = state.connection == ConnectionStatus.CONNECTED && !state.working
+    var dialAdjusting by remember { mutableStateOf(false) }
 
     if (subjects.isEmpty()) {
         EmptySubjects(onAddSubject)
         return
     }
 
-    val mainContent: @Composable (Modifier, Boolean) -> Unit = { modifier, scrollable ->
+    val mainContent: @Composable (Modifier, Boolean, Dp) -> Unit = { modifier, scrollable, faceHeight ->
         Column(
             modifier
                 .let { if (scrollable) it.verticalScroll(rememberScrollState()) else it }
-                .padding(horizontal = if (wide) 34.dp else 20.dp, vertical = if (wide) 24.dp else 20.dp),
+                .padding(horizontal = if (wide) 34.dp else 20.dp,
+                    vertical = if (foldPosture.isBook) 12.dp else if (wide) 24.dp else 20.dp),
         ) {
             SectionEyebrow("작업대")
             Spacer(Modifier.height(8.dp))
             SubjectRail(subjects, activeSubject?.id, onSelectSubject, onAddSubject)
-            Spacer(Modifier.height(if (wide) 28.dp else 18.dp))
+            Spacer(Modifier.height(if (foldPosture.isBook) 12.dp else if (wide) 28.dp else 18.dp))
             TimerWorkbench(
                 timer = timer,
                 subject = activeSubject,
@@ -104,8 +106,13 @@ internal fun FocusTab(
                 selectedMode = selectedMode,
                 clockStyle = state.clockStyle,
                 onClockStyle = controller::setClockStyle,
-                clockHeight = if (wide) 286.dp else 232.dp,
-                canMutate = connected,
+                clockHeight = faceHeight,
+                canMutate = connected && !dialAdjusting,
+                dialSession = timeDialSession(state, activeSubject, selectedMode),
+                dialBusy = state.working,
+                dialFeedback = state.message,
+                onDialCommit = { minutes, key -> commitTimeDial(controller, activeSubject?.id, selectedMode, minutes, key) },
+                onDialAdjustingChange = { dialAdjusting = it },
                 onMode = { selectedModeName = it.name },
                 onStart = { activeSubject?.let { controller.start(it.id, selectedMode, if (selectedMode == TimerMode.COUNTDOWN) it.focusSeconds else null) } },
                 onPause = controller::pause,
@@ -137,6 +144,7 @@ internal fun FocusTab(
         val hingeTop = (foldPosture.hingeTopDp - contentOriginY).coerceAtLeast(0f)
         val validBook = foldPosture.isBook && hingeLeft > 120f && hingeLeft + foldPosture.hingeWidthDp < maxWidth.value - 120f
         val validTabletop = foldPosture.isTabletop && hingeTop > 120f && hingeTop + foldPosture.hingeHeightDp < maxHeight.value - 120f
+        val bookClockHeight = (maxHeight.value - 320f).coerceIn(132f, 240f).dp
 
         when {
             validTabletop -> TabletopFocus(
@@ -153,10 +161,12 @@ internal fun FocusTab(
                 onTimeSettings = onTimeSettings,
                 hingeTopDp = hingeTop,
                 hingeHeightDp = foldPosture.hingeHeightDp,
+                dialAdjusting = dialAdjusting,
+                onDialAdjustingChange = { dialAdjusting = it },
             )
 
             validBook -> Row(Modifier.fillMaxSize()) {
-                mainContent(Modifier.width(hingeLeft.dp).fillMaxHeight(), true)
+                mainContent(Modifier.width(hingeLeft.dp).fillMaxHeight(), true, bookClockHeight)
                 Spacer(Modifier.width(foldPosture.hingeWidthDp.dp))
                 TodayLedger(
                     subjects = subjects,
@@ -169,7 +179,7 @@ internal fun FocusTab(
             }
 
             wide -> Row(Modifier.fillMaxSize()) {
-                mainContent(Modifier.weight(1.3f).fillMaxHeight(), true)
+                mainContent(Modifier.weight(1.3f).fillMaxHeight(), true, 316.dp)
                 Box(Modifier.width(1.dp).fillMaxHeight().background(Rule.copy(alpha = 0.75f)))
                 TodayLedger(
                     subjects = subjects,
@@ -182,7 +192,7 @@ internal fun FocusTab(
             }
 
             else -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                mainContent(Modifier.fillMaxWidth(), false)
+                mainContent(Modifier.fillMaxWidth(), false, 262.dp)
                 ThinRule(Modifier.padding(horizontal = 20.dp))
                 TodayLedger(
                     subjects = subjects,
@@ -213,6 +223,8 @@ private fun TabletopFocus(
     onTimeSettings: () -> Unit,
     hingeTopDp: Float,
     hingeHeightDp: Float,
+    dialAdjusting: Boolean,
+    onDialAdjustingChange: (Boolean) -> Unit,
 ) {
     val timer = state.snapshot?.timer ?: TimerState()
     val canMutate = state.connection == ConnectionStatus.CONNECTED && !state.working
@@ -247,6 +259,11 @@ private fun TabletopFocus(
                 showModeSelector = false,
                 showStylePicker = false,
                 showTimeSettings = false,
+                dialSession = timeDialSession(state, activeSubject, selectedMode),
+                dialBusy = state.working,
+                dialFeedback = state.message,
+                onDialCommit = { minutes, key -> commitTimeDial(controller, activeSubject?.id, selectedMode, minutes, key) },
+                onDialAdjustingChange = onDialAdjustingChange,
             )
         }
         Spacer(Modifier.height(hingeHeightDp.dp))
@@ -273,7 +290,7 @@ private fun TabletopFocus(
                     timer = timer,
                     subject = activeSubject,
                     selectedMode = selectedMode,
-                    canMutate = canMutate,
+                    canMutate = canMutate && !dialAdjusting,
                     onStart = start,
                     onPause = controller::pause,
                     onResume = controller::resume,
@@ -312,6 +329,11 @@ private fun TimerWorkbench(
     onClockStyle: (TimerClockStyle) -> Unit,
     clockHeight: Dp,
     canMutate: Boolean,
+    dialSession: TimeDialSession,
+    dialBusy: Boolean,
+    dialFeedback: String?,
+    onDialCommit: (Int, String) -> Boolean,
+    onDialAdjustingChange: (Boolean) -> Unit,
     onMode: (TimerMode) -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
@@ -330,6 +352,11 @@ private fun TimerWorkbench(
         onClockStyle,
         clockHeight,
         onTimeSettings = onTimeSettings,
+        dialSession = dialSession,
+        dialBusy = dialBusy,
+        dialFeedback = dialFeedback,
+        onDialCommit = onDialCommit,
+        onDialAdjustingChange = onDialAdjustingChange,
     )
     Spacer(Modifier.height(16.dp))
     TimerActions(
@@ -359,6 +386,11 @@ private fun TimerReadout(
     showStylePicker: Boolean = true,
     showTimeSettings: Boolean = true,
     onTimeSettings: () -> Unit = {},
+    dialSession: TimeDialSession,
+    dialBusy: Boolean,
+    dialFeedback: String?,
+    onDialCommit: (Int, String) -> Boolean,
+    onDialAdjustingChange: (Boolean) -> Unit,
 ) {
     val status = timer.status
     val shownMode = if (status == TimerStatus.IDLE) selectedMode else timer.mode
@@ -388,13 +420,41 @@ private fun TimerReadout(
     } else {
         countdownClockReadingMillis((targetMillis - elapsed).coerceAtLeast(0), targetMillis)
     }
-    TimerClockVisual(
-        style = clockStyle,
-        reading = reading,
-        running = status == TimerStatus.RUNNING,
-        height = clockHeight,
-        sizingReferenceSeconds = if (shownMode == TimerMode.COUNTDOWN) target else reading.valueSeconds,
-    )
+    if (shownMode == TimerMode.COUNTDOWN) {
+        ClockTimeDial(
+            valueMinutes = dialSession.valueMinutes,
+            minimumMinutes = dialSession.minimumMinutes,
+            maximumMinutes = dialSession.maximumMinutes,
+            enabled = dialSession.enabled,
+            interactionKey = dialSession.interactionKey,
+            busy = dialBusy,
+            feedbackMessage = dialFeedback,
+            onCommit = onDialCommit,
+            height = clockHeight,
+            compact = !showTimeSettings,
+        onAdjustingChange = onDialAdjustingChange,
+        ) { previewMinutes, faceHeight ->
+            val previewTarget = previewMinutes?.times(60)
+            TimerClockVisual(
+                style = clockStyle,
+                reading = if (previewTarget != null) countdownClockReadingMillis(
+                    previewTarget * 1000L, previewTarget * 1000L,
+                ) else reading,
+                running = previewTarget == null && status == TimerStatus.RUNNING,
+                height = faceHeight,
+                sizingReferenceSeconds = maxOf(target, previewTarget ?: 0),
+                readoutLabel = if (previewTarget != null) "전체 목표" else null,
+            )
+        }
+    } else {
+        TimerClockVisual(
+            style = clockStyle,
+            reading = reading,
+            running = status == TimerStatus.RUNNING,
+            height = clockHeight,
+            sizingReferenceSeconds = reading.valueSeconds,
+        )
+    }
     Spacer(Modifier.height(12.dp))
     Row(Modifier.fillMaxWidth()) {
         Text(
