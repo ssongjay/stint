@@ -21,6 +21,7 @@ import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import java.awt.Dimension
+import java.awt.Point
 import java.util.UUID
 
 fun main() {
@@ -43,13 +44,26 @@ private fun stintApplication() = application {
         }
     }
     var windowVisible by remember { mutableStateOf(true) }
+    var timerPopoverAnchor by remember { mutableStateOf<Point?>(null) }
     val windowState = rememberWindowState(size = DpSize(1100.dp, 780.dp))
     val menuBarAvailable = DesktopMenuBar(
         controller = controller,
         onOpen = { windowVisible = true },
         onQuit = { exitApplication() },
+        onShowTimer = { anchor ->
+            timerPopoverAnchor = if (timerPopoverAnchor == null) anchor else null
+        },
     )
     DisposableEffect(controller) { onDispose { controller.close() } }
+    timerPopoverAnchor?.let { anchor ->
+        DesktopTimerPopover(
+            controller = controller,
+            anchor = anchor,
+            onDismiss = { timerPopoverAnchor = null },
+            onOpen = { windowVisible = true },
+            onQuit = { exitApplication() },
+        )
+    }
 
     Window(
         visible = windowVisible,

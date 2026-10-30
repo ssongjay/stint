@@ -18,8 +18,11 @@ import java.awt.AWTException
 import java.awt.EventQueue
 import java.awt.MenuItem
 import java.awt.PopupMenu
+import java.awt.Point
 import java.awt.SystemTray
 import java.awt.TrayIcon
+import java.awt.event.MouseAdapter
+import java.awt.event.MouseEvent
 
 /** Owns one native status item for as long as the application composition exists. */
 @Composable
@@ -27,9 +30,11 @@ internal fun DesktopMenuBar(
     controller: ClientController,
     onOpen: () -> Unit,
     onQuit: () -> Unit,
+    onShowTimer: ((Point) -> Unit)? = null,
 ): Boolean {
     val open by rememberUpdatedState(onOpen)
     val quit by rememberUpdatedState(onQuit)
+    val showTimer by rememberUpdatedState(onShowTimer)
     var available by remember { mutableStateOf(false) }
 
     LaunchedEffect(controller) {
@@ -56,6 +61,7 @@ internal fun DesktopMenuBar(
                         if (menuBarTimer(controller.state.value).canSkipBreak) controller.skipBreak()
                     },
                     onQuit = { quit() },
+                    onShowTimer = showTimer,
                 )
             } catch (_: AWTException) {
                 // Keep a reachable window when the operating system cannot install a status item.
@@ -81,6 +87,7 @@ internal class DesktopMenuBarHost(
     onFinish: () -> Unit,
     onSkipBreak: () -> Unit,
     onQuit: () -> Unit,
+    onShowTimer: ((Point) -> Unit)? = null,
 ) : AutoCloseable {
     private val subject = MenuItem().apply { isEnabled = false }
     private val status = MenuItem().apply { isEnabled = false }
@@ -103,10 +110,24 @@ internal class DesktopMenuBarHost(
         add(MenuItem("종료").apply { addActionListener { onQuit() } })
     }
     private val tray = SystemTray.getSystemTray()
-    private val icon = TrayIcon(renderMenuBarTimer(initial), initial.tooltip, menu).apply {
+    private val icon = TrayIcon(
+        renderMenuBarTimer(initial),
+        initial.tooltip,
+        menu.takeIf { onShowTimer == null },
+    ).apply {
         // macOS preserves the image's width only when automatic square scaling is disabled.
         isImageAutoSize = false
-        addActionListener { onOpen() }
+        if (onShowTimer == null) {
+            addActionListener { onOpen() }
+        } else {
+            addMouseListener(object : MouseAdapter() {
+                override fun mouseReleased(event: MouseEvent) {
+                    if (event.button == MouseEvent.BUTTON1 || event.button == MouseEvent.BUTTON3) {
+                        onShowTimer(Point(event.xOnScreen, event.yOnScreen))
+                    }
+                }
+            })
+        }
     }
     private var displayed: MenuBarTimer? = null
     private var closed = false
