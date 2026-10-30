@@ -20,6 +20,7 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
+import kotlinx.coroutines.runBlocking
 import java.awt.Dimension
 import java.awt.Point
 import java.util.UUID
@@ -43,25 +44,46 @@ private fun stintApplication() = application {
             if (url.isNotBlank() && token.isNotBlank()) configured.configure(url, token)
         }
     }
+    val completionNotifications = remember { DesktopCompletionNotifications() }
     var windowVisible by remember { mutableStateOf(true) }
     var timerPopoverAnchor by remember { mutableStateOf<Point?>(null) }
     val windowState = rememberWindowState(size = DpSize(1100.dp, 780.dp))
     val menuBarAvailable = DesktopMenuBar(
         controller = controller,
         onOpen = { windowVisible = true },
-        onQuit = { exitApplication() },
+        onQuit = {
+            runBlocking { completionNotifications.close() }
+            exitApplication()
+        },
         onShowTimer = { anchor ->
             timerPopoverAnchor = if (timerPopoverAnchor == null) anchor else null
         },
     )
-    DisposableEffect(controller) { onDispose { controller.close() } }
+    LaunchedEffect(controller, completionNotifications) {
+        completionNotifications.authorize()
+        controller.state.collect(completionNotifications::update)
+    }
+    DisposableEffect(controller, completionNotifications) {
+        val shutdown = Thread({
+            runBlocking { completionNotifications.close() }
+        }, "stint-notification-shutdown")
+        Runtime.getRuntime().addShutdownHook(shutdown)
+        onDispose {
+            runBlocking { completionNotifications.close() }
+            controller.close()
+            runCatching { Runtime.getRuntime().removeShutdownHook(shutdown) }
+        }
+    }
     timerPopoverAnchor?.let { anchor ->
         DesktopTimerPopover(
             controller = controller,
             anchor = anchor,
             onDismiss = { timerPopoverAnchor = null },
             onOpen = { windowVisible = true },
-            onQuit = { exitApplication() },
+            onQuit = {
+                runBlocking { completionNotifications.close() }
+                exitApplication()
+            },
         )
     }
 
@@ -74,7 +96,10 @@ private fun stintApplication() = application {
         state = windowState,
     ) {
         LaunchedEffect(Unit) { window.minimumSize = Dimension(760, 620) }
-        StintApp(controller)
+        StintApp(
+            controller = controller,
+            onTestNotification = completionNotifications::testNotification,
+        )
     }
 }
 

@@ -12,6 +12,32 @@ val packagingJdkHome = providers.gradleProperty("stint.packagingJdk")
     .orElse(providers.environmentVariable("STINT_PACKAGING_JDK"))
     .orElse(providers.systemProperty("java.home"))
 
+val macNotificationLibrary = layout.buildDirectory.file(
+    "generated/appResources/macos/libStintCompletionNotifications.dylib",
+)
+val compileMacCompletionNotifications by tasks.registering(Exec::class) {
+    val source = layout.projectDirectory.file(
+        "src/desktopMain/native/StintCompletionNotifications.m",
+    )
+    inputs.file(source)
+    inputs.file(packagingJdkHome.map { file(it).resolve("include/jni.h") })
+    outputs.file(macNotificationLibrary)
+    doFirst {
+        val jdk = file(packagingJdkHome.get())
+        val output = macNotificationLibrary.get().asFile.apply { parentFile.mkdirs() }
+        commandLine(
+            "/usr/bin/xcrun", "clang", "-fobjc-arc", "-dynamiclib",
+            "-framework", "Foundation",
+            "-framework", "UserNotifications",
+            "-framework", "AppKit",
+            "-I", jdk.resolve("include").absolutePath,
+            "-I", jdk.resolve("include/darwin").absolutePath,
+            source.asFile.absolutePath,
+            "-o", output.absolutePath,
+        )
+    }
+}
+
 kotlin {
     androidTarget()
     jvm("desktop")
@@ -74,8 +100,8 @@ android {
         applicationId = "dev.stint.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.6.1"
+        versionCode = 10
+        versionName = "1.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("debug") {
@@ -97,7 +123,8 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg)
             packageName = "Stint"
-            packageVersion = "1.6.1"
+            packageVersion = "1.7.0"
+            appResourcesRootDir.set(layout.buildDirectory.dir("generated/appResources"))
             modules("java.net.http", "jdk.crypto.ec")
             macOS {
                 bundleID = "dev.stint.app"
@@ -105,6 +132,13 @@ compose.desktop {
             }
         }
     }
+}
+
+tasks.matching { it.name == "prepareAppResources" }.configureEach {
+    dependsOn(compileMacCompletionNotifications)
+}
+tasks.matching { it.name == "createDistributable" || it.name == "packageDmg" }.configureEach {
+    inputs.file(macNotificationLibrary).withPropertyName("stintMacNotificationLibrary")
 }
 
 // A changed JDK must rebuild the bundled runtime, even when application code is unchanged.
