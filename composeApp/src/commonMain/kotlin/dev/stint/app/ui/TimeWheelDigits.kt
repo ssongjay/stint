@@ -3,8 +3,6 @@ package dev.stint.app.ui
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -44,10 +42,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -78,7 +73,7 @@ internal fun VerticalTimeWheelReadout(
     val values = splitTimeWheelSeconds(totalSeconds)
     val minuteMaximum = (maximumSeconds.coerceAtLeast(0) / 60).coerceAtLeast(0)
     val secondRange = timeWheelSecondRange(totalSeconds, minimumSeconds, maximumSeconds)
-    val (minuteWeight, secondWeight) = timeWheelFieldWeights(maximumSeconds)
+    val minuteDigits = timeWheelMinuteSlotDigits(maximumSeconds, LocalClockMinuteSlotDigits.current)
     var activeField by remember(interactionKey) { mutableStateOf<TimeWheelField?>(null) }
     LaunchedEffect(enabled, interactionKey) {
         if (!enabled) {
@@ -86,101 +81,75 @@ internal fun VerticalTimeWheelReadout(
             onGestureActive(false)
         }
     }
-    val textMeasurer = rememberTextMeasurer()
-    BoxWithConstraints(modifier.fillMaxSize()) {
-        val availableWidth = constraints.maxWidth.toFloat()
-        val availableHeight = constraints.maxHeight.toFloat()
-        val minuteDigits = minuteWeight.toInt()
-        val fittedStyle = remember(
-            availableWidth, availableHeight, minuteDigits, minuteWeight, secondWeight, textStyle, textMeasurer,
-        ) {
-            var low = 1f
-            var high = textStyle.fontSize.value.coerceAtLeast(1f)
-            repeat(10) {
-                val middle = (low + high) / 2f
-                val candidate = textStyle.copy(
-                    fontSize = middle.sp,
-                    lineHeight = (middle * 1.08f).sp,
-                )
-                val colon = textMeasurer.measure(AnnotatedString(":"), candidate, maxLines = 1)
-                val fieldWidth = (availableWidth - colon.size.width).coerceAtLeast(1f)
-                val minuteWidth = fieldWidth * minuteWeight / (minuteWeight + secondWeight)
-                val secondWidth = fieldWidth - minuteWidth
-                val minuteFits = (0..9).all { digit ->
-                    textMeasurer.measure(
-                        AnnotatedString(digit.toString().repeat(minuteDigits)), candidate, maxLines = 1,
-                    ).size.width <= minuteWidth
-                }
-                val secondFits = (0..9).all { digit ->
-                    textMeasurer.measure(
-                        AnnotatedString(digit.toString().repeat(2)), candidate, maxLines = 1,
-                    ).size.width <= secondWidth
-                }
-                val heightFits = textMeasurer.measure(AnnotatedString("88"), candidate, maxLines = 1)
-                    .size.height <= availableHeight
-                if (minuteFits && secondFits && heightFits) low = middle else high = middle
-            }
-            textStyle.copy(fontSize = low.sp, lineHeight = (low * 1.08f).sp)
-        }
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-        VerticalTimeWheelField(
-            field = TimeWheelField.MINUTES,
-            value = values.minutes,
-            minimum = 0,
-            maximum = minuteMaximum,
-            enabled = enabled && minuteMaximum > 0 &&
-                (activeField == null || activeField == TimeWheelField.MINUTES),
-            interactionKey = interactionKey,
-            textStyle = fittedStyle,
-            modifier = Modifier.weight(minuteWeight).fillMaxHeight(),
-            onPreview = { minute ->
-                onPreview(combineTimeWheelSeconds(minute, values.seconds, minimumSeconds, maximumSeconds))
-            },
-            onSettled = { minute, key ->
-                onSettled(combineTimeWheelSeconds(minute, values.seconds, minimumSeconds, maximumSeconds), key)
-            },
-            onCancel = onCancel,
-            onGestureActive = { active ->
-                activeField = if (active) TimeWheelField.MINUTES
-                else activeField.takeUnless { it == TimeWheelField.MINUTES }
-                onGestureActive(activeField != null)
-            },
-            onTick = onTick,
-        )
-        Text(
-            text = ":",
-            color = Ink,
-            style = fittedStyle,
-            maxLines = 1,
-            textAlign = TextAlign.Center,
-        )
-        VerticalTimeWheelField(
-            field = TimeWheelField.SECONDS,
-            value = values.seconds,
-            minimum = secondRange.first,
-            maximum = secondRange.last,
-            enabled = enabled && secondRange.first < secondRange.last &&
-                (activeField == null || activeField == TimeWheelField.SECONDS),
-            interactionKey = interactionKey,
-            textStyle = fittedStyle,
-            modifier = Modifier.weight(secondWeight).fillMaxHeight(),
-            onPreview = { second ->
-                onPreview(combineTimeWheelSeconds(values.minutes, second, minimumSeconds, maximumSeconds))
-            },
-            onSettled = { second, key ->
-                onSettled(combineTimeWheelSeconds(values.minutes, second, minimumSeconds, maximumSeconds), key)
-            },
-            onCancel = onCancel,
-            onGestureActive = { active ->
-                activeField = if (active) TimeWheelField.SECONDS
-                else activeField.takeUnless { it == TimeWheelField.SECONDS }
-                onGestureActive(activeField != null)
-            },
-            onTick = onTick,
-        )
-        }
-    }
+    MinuteSecondClockLayout(
+        minuteSlotDigits = minuteDigits,
+        textStyle = textStyle,
+        modifier = modifier.fillMaxSize(),
+        minuteModifier = Modifier.fillMaxHeight(),
+        secondModifier = Modifier.fillMaxHeight(),
+        minuteContent = {
+            VerticalTimeWheelField(
+                field = TimeWheelField.MINUTES,
+                value = values.minutes,
+                minimum = 0,
+                maximum = minuteMaximum,
+                enabled = enabled && minuteMaximum > 0 &&
+                    (activeField == null || activeField == TimeWheelField.MINUTES),
+                interactionKey = interactionKey,
+                textStyle = textStyle,
+                textAlign = TextAlign.End,
+                modifier = Modifier.fillMaxSize(),
+                onPreview = { minute ->
+                    onPreview(combineTimeWheelSeconds(minute, values.seconds, minimumSeconds, maximumSeconds))
+                },
+                onSettled = { minute, key ->
+                    onSettled(combineTimeWheelSeconds(minute, values.seconds, minimumSeconds, maximumSeconds), key)
+                },
+                onCancel = onCancel,
+                onGestureActive = { active ->
+                    activeField = if (active) TimeWheelField.MINUTES
+                    else activeField.takeUnless { it == TimeWheelField.MINUTES }
+                    onGestureActive(activeField != null)
+                },
+                onTick = onTick,
+            )
+        },
+        secondContent = {
+            VerticalTimeWheelField(
+                field = TimeWheelField.SECONDS,
+                value = values.seconds,
+                minimum = secondRange.first,
+                maximum = secondRange.last,
+                enabled = enabled && secondRange.first < secondRange.last &&
+                    (activeField == null || activeField == TimeWheelField.SECONDS),
+                interactionKey = interactionKey,
+                textStyle = textStyle,
+                textAlign = TextAlign.Start,
+                modifier = Modifier.fillMaxSize(),
+                onPreview = { second ->
+                    onPreview(combineTimeWheelSeconds(values.minutes, second, minimumSeconds, maximumSeconds))
+                },
+                onSettled = { second, key ->
+                    onSettled(combineTimeWheelSeconds(values.minutes, second, minimumSeconds, maximumSeconds), key)
+                },
+                onCancel = onCancel,
+                onGestureActive = { active ->
+                    activeField = if (active) TimeWheelField.SECONDS
+                    else activeField.takeUnless { it == TimeWheelField.SECONDS }
+                    onGestureActive(activeField != null)
+                },
+                onTick = onTick,
+            )
+        },
+    )
 }
+
+internal fun timeWheelMinuteSlotDigits(maximumSeconds: Int, sizingReferenceDigits: Int = 2): Int =
+    maxOf(
+        2,
+        sizingReferenceDigits,
+        (maximumSeconds.coerceAtLeast(0) / 60).toString().length,
+    )
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable
@@ -192,6 +161,7 @@ private fun VerticalTimeWheelField(
     enabled: Boolean,
     interactionKey: String,
     textStyle: TextStyle,
+    textAlign: TextAlign,
     modifier: Modifier,
     onPreview: (Int) -> Unit,
     onSettled: (Int, String) -> Unit,
@@ -415,7 +385,7 @@ private fun VerticalTimeWheelField(
                 color = Ink,
                 style = style,
                 maxLines = 1,
-                textAlign = TextAlign.Center,
+                textAlign = textAlign,
             )
         }
     }

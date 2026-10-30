@@ -60,4 +60,21 @@ class TimerClockVisualTest {
         )
         assertTrue(clockTimeSizingSamples("99:59", "120:00").all { it.length == "000:00".length })
     }
+
+    @Test
+    fun countdownFieldKeepsReferenceWidthWithoutAddingVisibleSpaceBeforeColon() {
+        assertEquals(3, countdownMinuteSlotDigits("14:42", "240:00"))
+        assertEquals(3, countdownMinuteSlotDigits("100:00", "25:00"))
+        assertEquals(2, countdownMinuteSlotDigits("09:59", "25:00"))
+    }
+
+    @Test
+    fun pausedWheelKeepsPhaseReferenceDigitsWhenAllowedRemainingTimeHasFewerDigits() {
+        val phaseDigits = countdownMinuteSlotDigits("99:00", "240:00")
+
+        assertEquals(3, phaseDigits)
+        assertEquals(3, timeWheelMinuteSlotDigits(maximumSeconds = 99 * 60, sizingReferenceDigits = phaseDigits))
+        assertEquals(3, timeWheelMinuteSlotDigits(maximumSeconds = 240 * 60))
+        assertEquals(2, timeWheelMinuteSlotDigits(maximumSeconds = 99 * 60))
+    }
 }

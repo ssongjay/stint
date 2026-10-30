@@ -18,12 +18,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +39,7 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
+import androidx.compose.ui.layout.Layout
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -62,6 +65,7 @@ private val SandGold = Color(0xFFAE7B49)
 private val SandDark = Color(0xFF755B3B)
 
 internal typealias ClockTimeContent = @Composable BoxScope.(TextStyle) -> Unit
+internal val LocalClockMinuteSlotDigits = staticCompositionLocalOf { 2 }
 
 @Composable
 internal fun TimerClockVisual(
@@ -353,13 +357,19 @@ private fun FittedClockTime(
                     lineHeight = (middle * 1.08f).sp,
                     fontFeatureSettings = "tnum",
                 )
-                val fits = sizingSamples.all { sample ->
-                    val measured = measurer.measure(
-                        text = AnnotatedString(sample),
-                        style = style,
-                        maxLines = 1,
-                    )
-                    measured.size.width <= availableWidth && measured.size.height <= availableHeight
+                val fits = if (sizingReferenceTime.count { it == ':' } == 1) {
+                    val minuteDigits = countdownMinuteSlotDigits(time, sizingReferenceTime)
+                    minuteSecondClockWidth(measurer, style, minuteDigits) <= availableWidth &&
+                        measurer.measure(AnnotatedString("88"), style, maxLines = 1).size.height <= availableHeight
+                } else {
+                    sizingSamples.all { sample ->
+                        val measured = measurer.measure(
+                            text = AnnotatedString(sample),
+                            style = style,
+                            maxLines = 1,
+                        )
+                        measured.size.width <= availableWidth && measured.size.height <= availableHeight
+                    }
                 }
                 if (fits) low = middle else high = middle
             }
@@ -370,7 +380,26 @@ private fun FittedClockTime(
             lineHeight = fontSize * 1.08f,
             fontFeatureSettings = "tnum",
         )
-        if (content == null) {
+        if (content == null && time.count { it == ':' } == 1 && textAlign == TextAlign.Center) {
+            val parts = time.split(':', limit = 2)
+            MinuteSecondClockLayout(
+                minuteSlotDigits = countdownMinuteSlotDigits(time, sizingReferenceTime),
+                textStyle = fittedStyle,
+                modifier = Modifier.fillMaxSize(),
+                minuteContent = {
+                    Text(
+                        text = parts[0], modifier = Modifier.fillMaxWidth(), color = Ink, style = fittedStyle,
+                        maxLines = 1, textAlign = TextAlign.End,
+                    )
+                },
+                secondContent = {
+                    Text(
+                        text = parts[1], modifier = Modifier.fillMaxWidth(), color = Ink, style = fittedStyle,
+                        maxLines = 1, textAlign = TextAlign.Start,
+                    )
+                },
+            )
+        } else if (content == null) {
             Text(
                 time,
                 modifier = Modifier.fillMaxWidth(),
@@ -380,10 +409,77 @@ private fun FittedClockTime(
                 textAlign = textAlign,
             )
         } else {
-            content(fittedStyle)
+            val minuteSlotDigits = if (time.count { it == ':' } == 1) {
+                countdownMinuteSlotDigits(time, sizingReferenceTime)
+            } else {
+                2
+            }
+            CompositionLocalProvider(LocalClockMinuteSlotDigits provides minuteSlotDigits) {
+                content(fittedStyle)
+            }
         }
     }
 }
+
+/** Keeps the separator fixed while both numeric fields stay tightly attached to it. */
+@Composable
+internal fun MinuteSecondClockLayout(
+    minuteSlotDigits: Int,
+    textStyle: TextStyle,
+    modifier: Modifier = Modifier,
+    minuteModifier: Modifier = Modifier,
+    secondModifier: Modifier = Modifier,
+    minuteContent: @Composable BoxScope.() -> Unit,
+    secondContent: @Composable BoxScope.() -> Unit,
+) {
+    val measurer = rememberTextMeasurer()
+    val safeMinuteDigits = minuteSlotDigits.coerceAtLeast(2)
+    val widths = remember(safeMinuteDigits, textStyle, measurer) {
+        widestRepeatedDigitWidth(measurer, textStyle, safeMinuteDigits) to
+            widestRepeatedDigitWidth(measurer, textStyle, 2)
+    }
+    Layout(
+        modifier = modifier,
+        content = {
+            Box(minuteModifier, contentAlignment = Alignment.CenterEnd, content = minuteContent)
+            Text(":", color = Ink, style = textStyle, maxLines = 1)
+            Box(secondModifier, contentAlignment = Alignment.CenterStart, content = secondContent)
+        },
+    ) { measurables, constraints ->
+        val loose = constraints.copy(minWidth = 0, minHeight = 0)
+        val minute = measurables[0].measure(loose.copy(minWidth = widths.first, maxWidth = widths.first))
+        val colon = measurables[1].measure(loose)
+        val second = measurables[2].measure(loose.copy(minWidth = widths.second, maxWidth = widths.second))
+        val width = constraints.maxWidth
+        val height = constraints.maxHeight
+        val groupWidth = minute.width + colon.width + second.width
+        val groupX = ((width - groupWidth) / 2).coerceAtLeast(0)
+        layout(width, height) {
+            minute.placeRelative(groupX, (height - minute.height) / 2)
+            colon.placeRelative(groupX + minute.width, (height - colon.height) / 2)
+            second.placeRelative(groupX + minute.width + colon.width, (height - second.height) / 2)
+        }
+    }
+}
+
+private fun widestRepeatedDigitWidth(
+    measurer: androidx.compose.ui.text.TextMeasurer,
+    style: TextStyle,
+    digits: Int,
+): Int = (0..9).maxOf { digit ->
+    measurer.measure(AnnotatedString(digit.toString().repeat(digits)), style, maxLines = 1).size.width
+}
+
+private fun minuteSecondClockWidth(
+    measurer: androidx.compose.ui.text.TextMeasurer,
+    style: TextStyle,
+    minuteDigits: Int,
+): Int = widestRepeatedDigitWidth(measurer, style, minuteDigits) +
+    measurer.measure(AnnotatedString(":"), style, maxLines = 1).size.width +
+    widestRepeatedDigitWidth(measurer, style, 2)
+
+internal fun countdownMinuteSlotDigits(time: String, sizingReferenceTime: String = time): Int =
+    maxOf(time.indexOf(':'), sizingReferenceTime.indexOf(':'), 2)
 
 /**
  * Stable samples for every numeral in the current time format. Measuring these rather than the
