@@ -92,6 +92,9 @@ class TimeDialGestureTest {
         assertTrue("Crossing minute detents must tick", harness.ticks.get() >= 2)
         writePrivateWindowScreenshot("vertical-wheel-fixture")
 
+        waitUntil("minute wheel ready after acknowledged commit") {
+            !harness.adjusting.get() && harness.renderedPreviewSeconds.get() == null
+        }
         val ticksAfterUp = harness.ticks.get()
         verticalDrag(surface.minuteX, surface.upperY, surface.farLowerY, moveCount = 12)
         waitUntil("minute wheel down commit") { harness.commitAttempts.get() == 2 }
@@ -113,6 +116,9 @@ class TimeDialGestureTest {
         assertEquals("Second changes must preserve minutes", 25, increased / 60)
         assertTrue("Dragging seconds up must increase seconds", increased % 60 > 17)
 
+        waitUntil("second wheel ready after acknowledged commit") {
+            !harness.adjusting.get() && harness.renderedPreviewSeconds.get() == null
+        }
         verticalDrag(surface.secondX, surface.upperY, surface.lowerY)
         waitUntil("second wheel down commit") { harness.commitAttempts.get() == 2 }
         val decreased = harness.committedSeconds.get()

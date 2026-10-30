@@ -18,14 +18,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -65,7 +63,6 @@ private val SandGold = Color(0xFFAE7B49)
 private val SandDark = Color(0xFF755B3B)
 
 internal typealias ClockTimeContent = @Composable BoxScope.(TextStyle) -> Unit
-internal val LocalClockMinuteSlotDigits = staticCompositionLocalOf { 2 }
 
 @Composable
 internal fun TimerClockVisual(
@@ -383,7 +380,7 @@ private fun FittedClockTime(
         if (content == null && time.count { it == ':' } == 1 && textAlign == TextAlign.Center) {
             val parts = time.split(':', limit = 2)
             MinuteSecondClockLayout(
-                minuteSlotDigits = countdownMinuteSlotDigits(time, sizingReferenceTime),
+                minuteSlotDigits = countdownMinuteSlotDigits(time),
                 textStyle = fittedStyle,
                 modifier = Modifier.fillMaxSize(),
                 minuteContent = {
@@ -409,19 +406,12 @@ private fun FittedClockTime(
                 textAlign = textAlign,
             )
         } else {
-            val minuteSlotDigits = if (time.count { it == ':' } == 1) {
-                countdownMinuteSlotDigits(time, sizingReferenceTime)
-            } else {
-                2
-            }
-            CompositionLocalProvider(LocalClockMinuteSlotDigits provides minuteSlotDigits) {
-                content(fittedStyle)
-            }
+            content(fittedStyle)
         }
     }
 }
 
-/** Keeps the separator fixed while both numeric fields stay tightly attached to it. */
+/** Centers visible digits; the separate phase reference controls font fitting only. */
 @Composable
 internal fun MinuteSecondClockLayout(
     minuteSlotDigits: Int,

@@ -73,7 +73,7 @@ internal fun VerticalTimeWheelReadout(
     val values = splitTimeWheelSeconds(totalSeconds)
     val minuteMaximum = (maximumSeconds.coerceAtLeast(0) / 60).coerceAtLeast(0)
     val secondRange = timeWheelSecondRange(totalSeconds, minimumSeconds, maximumSeconds)
-    val minuteDigits = timeWheelMinuteSlotDigits(maximumSeconds, LocalClockMinuteSlotDigits.current)
+    val minuteDigits = values.minutes.toString().length.coerceAtLeast(2)
     var activeField by remember(interactionKey) { mutableStateOf<TimeWheelField?>(null) }
     LaunchedEffect(enabled, interactionKey) {
         if (!enabled) {
@@ -143,13 +143,6 @@ internal fun VerticalTimeWheelReadout(
         },
     )
 }
-
-internal fun timeWheelMinuteSlotDigits(maximumSeconds: Int, sizingReferenceDigits: Int = 2): Int =
-    maxOf(
-        2,
-        sizingReferenceDigits,
-        (maximumSeconds.coerceAtLeast(0) / 60).toString().length,
-    )
 
 @OptIn(ExperimentalComposeUiApi::class)
 @Composable

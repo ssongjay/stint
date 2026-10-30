@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -97,6 +98,21 @@ class ClockReadoutLayoutTest {
         )
     }
 
+    @Test
+    fun subMinuteReadoutStaysCenteredWhenTimeBecomesEditable() {
+        assertReadoutGeometryStable("00-18", 18, widthDp = 320f, heightDp = 260f)
+    }
+
+    @Test
+    fun twoDigitMaximumReadoutStaysCenteredWhenTimeBecomesEditable() {
+        assertReadoutGeometryStable("99-59", 99 * 60 + 59, widthDp = 320f, heightDp = 260f)
+    }
+
+    @Test
+    fun threeDigitMaximumReadoutStaysCenteredWhenTimeBecomesEditable() {
+        assertReadoutGeometryStable("240-00", 240 * 60, widthDp = 320f, heightDp = 260f)
+    }
+
     private fun assertReadoutGeometryStable(
         name: String,
         seconds: Int,
@@ -124,6 +140,8 @@ class ClockReadoutLayoutTest {
 
         assertSameReadoutGeometry("$name read-only to editable", readOnly, editable)
         assertTrue("$name must render a visible numeric readout", inkBounds(readOnly).width() > 30)
+        assertReadoutCentered("$name read-only", readOnly)
+        assertReadoutCentered("$name editable", editable)
         if (export) {
             writePrivatePng("readout-layout-$name-before.png", readOnly)
             writePrivatePng("readout-layout-$name-editable.png", editable)
@@ -134,6 +152,7 @@ class ClockReadoutLayoutTest {
         assertEquals("A tap without a vertical adjustment must not settle a new value", 0, harness.settles.get())
         val afterTap = crop(captureWindow(), readoutRect)
         assertSameReadoutGeometry("$name after tap", readOnly, afterTap)
+        assertReadoutCentered("$name after tap", afterTap)
 
         instrumentation.runOnMainSync {
             harness.readoutBounds.set(null)
@@ -143,6 +162,7 @@ class ClockReadoutLayoutTest {
         settleFrames()
         val restored = crop(captureWindow(), readoutRect)
         assertSameReadoutGeometry("$name restored read-only", readOnly, restored)
+        assertReadoutCentered("$name restored read-only", restored)
 
         readOnly.recycle()
         editable.recycle()
@@ -160,6 +180,15 @@ class ClockReadoutLayoutTest {
     ): LayoutHarness {
         val harness = LayoutHarness()
         val launched = ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
+        launched.moveToState(Lifecycle.State.RESUMED)
+        waitUntil("fixture activity window") {
+            var ready = false
+            launched.onActivity { activity ->
+                val decor = activity.window.decorView
+                ready = decor.isAttachedToWindow && decor.hasWindowFocus() && decor.width > 0 && decor.height > 0
+            }
+            ready
+        }
         launched.onActivity { activity ->
             activity.setContent {
                 WorkbenchTheme {
@@ -274,6 +303,17 @@ class ClockReadoutLayoutTest {
         val changed = expectedPixels.indices.count { index -> colorDistance(expectedPixels[index], actualPixels[index]) > 6 }
         val allowance = (expectedPixels.size * .001f).toInt().coerceAtLeast(4)
         assertTrue("$label changed $changed pixels; allowed $allowance", changed <= allowance)
+    }
+
+    private fun assertReadoutCentered(label: String, bitmap: Bitmap) {
+        val inkCenter = inkBounds(bitmap).exactCenterX()
+        val clockCenter = bitmap.width / 2f
+        val offset = abs(inkCenter - clockCenter)
+        val tolerance = maxOf(3f, bitmap.width * .025f)
+        assertTrue(
+            "$label ink center $inkCenter is ${offset}px from clock center $clockCenter; allowed $tolerance",
+            offset <= tolerance,
+        )
     }
 
     private fun inkBounds(bitmap: Bitmap): Rect {

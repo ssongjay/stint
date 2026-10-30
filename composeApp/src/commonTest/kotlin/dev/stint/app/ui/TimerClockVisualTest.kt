@@ -62,19 +62,19 @@ class TimerClockVisualTest {
     }
 
     @Test
-    fun countdownFieldKeepsReferenceWidthWithoutAddingVisibleSpaceBeforeColon() {
+    fun countdownFontSizeReferenceRetainsMaximumPhaseDigits() {
         assertEquals(3, countdownMinuteSlotDigits("14:42", "240:00"))
         assertEquals(3, countdownMinuteSlotDigits("100:00", "25:00"))
         assertEquals(2, countdownMinuteSlotDigits("09:59", "25:00"))
     }
 
     @Test
-    fun pausedWheelKeepsPhaseReferenceDigitsWhenAllowedRemainingTimeHasFewerDigits() {
-        val phaseDigits = countdownMinuteSlotDigits("99:00", "240:00")
-
-        assertEquals(3, phaseDigits)
-        assertEquals(3, timeWheelMinuteSlotDigits(maximumSeconds = 99 * 60, sizingReferenceDigits = phaseDigits))
-        assertEquals(3, timeWheelMinuteSlotDigits(maximumSeconds = 240 * 60))
-        assertEquals(2, timeWheelMinuteSlotDigits(maximumSeconds = 99 * 60))
+    fun visibleMinuteSlotsExcludeUnusedPhaseDigits() {
+        assertEquals(2, countdownMinuteSlotDigits("00:18"))
+        assertEquals(2, countdownMinuteSlotDigits("14:42"))
+        assertEquals(2, countdownMinuteSlotDigits("99:59"))
+        assertEquals(3, countdownMinuteSlotDigits("100:00"))
+        assertEquals(3, countdownMinuteSlotDigits("240:00"))
+        assertEquals(3, countdownMinuteSlotDigits("14:42", "240:00"))
     }
 }
