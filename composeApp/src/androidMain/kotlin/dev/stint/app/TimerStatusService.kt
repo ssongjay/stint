@@ -19,15 +19,18 @@ class TimerStatusService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val controller get() = (application as StintApplication).controller
     private lateinit var notification: TimerNotification
+    private lateinit var completionNotifications: AndroidCompletionNotifications
 
     override fun onCreate() {
         super.onCreate()
         running = true
         notification = TimerNotification(this)
+        completionNotifications = AndroidCompletionNotifications(this)
         startForeground(TimerNotification.NOTIFICATION_ID, notification.connectingNotification())
         scope.launch {
             var previous: List<Any?>? = null
             controller.state.collect { state ->
+                completionNotifications.update(state)
                 if (state.connection == ConnectionStatus.SETUP ||
                     (state.connection == ConnectionStatus.CONNECTED && state.snapshot?.timer?.status == TimerStatus.IDLE)) {
                     stopForeground(STOP_FOREGROUND_REMOVE)

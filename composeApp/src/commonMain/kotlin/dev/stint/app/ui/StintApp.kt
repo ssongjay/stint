@@ -43,6 +43,8 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -82,7 +84,7 @@ data class FoldPosture(
 )
 
 @Composable
-fun StintApp(controller: ClientController, foldPosture: FoldPosture = FoldPosture()) {
+fun StintApp(controller: ClientController, foldPosture: FoldPosture = FoldPosture(), onTestNotification: (suspend () -> String)? = null) {
     val state by controller.state.collectAsState()
 
     WorkbenchTheme {
@@ -97,14 +99,14 @@ fun StintApp(controller: ClientController, foldPosture: FoldPosture = FoldPostur
                     onDismissMessage = controller::dismissMessage,
                 )
             } else {
-                Workbench(controller, state, foldPosture)
+                Workbench(controller, state, foldPosture, onTestNotification)
             }
         }
     }
 }
 
 @Composable
-private fun Workbench(controller: ClientController, state: ClientState, foldPosture: FoldPosture) {
+private fun Workbench(controller: ClientController, state: ClientState, foldPosture: FoldPosture, onTestNotification: (suspend () -> String)?) {
     var tabName by rememberSaveable { mutableStateOf(MainTab.FOCUS.name) }
     var panelName by rememberSaveable { mutableStateOf(SidePanel.NONE.name) }
     var selectedSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -151,6 +153,7 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
                 panel == SidePanel.CONNECTION -> ConnectionSettingsPanel(
                     state = state,
                     onSave = controller::configure,
+                    onTestNotification = onTestNotification,
                     onClose = { panelName = SidePanel.NONE.name },
                 )
 
@@ -406,7 +409,10 @@ private fun ConnectionSetup(
 
 @Composable
 @Suppress("DEPRECATION")
-private fun ConnectionSettingsPanel(state: ClientState, onSave: (String, String) -> Unit, onClose: () -> Unit) {
+private fun ConnectionSettingsPanel(state: ClientState, onSave: (String, String) -> Unit, onClose: () -> Unit, onTestNotification: (suspend () -> String)?) {
+    val scope = rememberCoroutineScope()
+    var notificationMessage by remember { mutableStateOf<String?>(null) }
+    var testingNotification by remember { mutableStateOf(false) }
     var url by remember(state.settings.baseUrl) { mutableStateOf(state.settings.baseUrl) }
     var token by remember(state.settings.token) { mutableStateOf(state.settings.token) }
     var copiedMessage by remember { mutableStateOf<String?>(null) }
@@ -442,6 +448,24 @@ private fun ConnectionSettingsPanel(state: ClientState, onSave: (String, String)
             Text(state.settings.deviceName.ifBlank { "이름 없음" }, style = MaterialTheme.typography.titleMedium)
             Text(state.settings.deviceId, style = MaterialTheme.typography.labelSmall, color = InkMuted)
             Spacer(Modifier.height(24.dp))
+            if (onTestNotification != null) {
+                Text("종료 알림", style = MaterialTheme.typography.labelMedium, color = InkMuted)
+                Spacer(Modifier.height(8.dp))
+                Text("집중과 휴식이 끝나면 시스템 알림음으로 알려드려요.", style = MaterialTheme.typography.bodyMedium)
+                TextButton(
+                    enabled = !testingNotification,
+                    onClick = {
+                        scope.launch {
+                            testingNotification = true
+                            notificationMessage = runCatching { onTestNotification() }
+                                .getOrDefault("알림을 보내지 못했어요. 시스템 알림 설정을 확인해 주세요.")
+                            testingNotification = false
+                        }
+                    },
+                ) { Text(if (testingNotification) "확인하는 중" else "알림 테스트") }
+                notificationMessage?.let { Text(it, color = InkMuted, style = MaterialTheme.typography.bodySmall) }
+                Spacer(Modifier.height(20.dp))
+            }
             Text("다른 기기 연결", style = MaterialTheme.typography.labelMedium, color = InkMuted)
             Spacer(Modifier.height(8.dp))
             Text("새 기기에 같은 서버 주소와 연결 키를 붙여 넣으세요.", style = MaterialTheme.typography.bodyMedium)

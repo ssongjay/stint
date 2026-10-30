@@ -57,7 +57,20 @@ class MainActivity : ComponentActivity() {
                         .toFoldPosture(resources.displayMetrics.density)
                 }
             }
-            StintApp(controller, foldPosture)
+            StintApp(controller, foldPosture, onTestNotification = {
+                if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                    "시스템 설정에서 Stint 알림을 허용해 주세요."
+                } else {
+                    val manager = getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                    ensureCompletionChannel(manager)
+                    manager.notify(1203, buildCompletionNotification(this@MainActivity,
+                        dev.stint.app.client.TimerCompletionEvent(
+                            key = "preview", phase = dev.stint.shared.TimerPhase.FOCUS, subjectName = "",
+                            title = "알림 테스트", body = "집중과 휴식이 끝나면 이렇게 알려드려요.",
+                        )))
+                    "테스트 알림을 보냈어요. 무음·방해 금지 설정에 따라 소리가 나지 않을 수 있어요."
+                }
+            })
         }
     }
     override fun onResume() {
