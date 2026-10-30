@@ -181,7 +181,7 @@ private data class MenuBarLayout(
 )
 
 private fun menuBarLayout(model: MenuBarTimer): MenuBarLayout {
-    val font = menuBarFont(11f)
+    val font = menuBarFont(14f)
     val metricsImage = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
     val metrics = metricsImage.createGraphics().run {
         this.font = font
@@ -189,7 +189,7 @@ private fun menuBarLayout(model: MenuBarTimer): MenuBarLayout {
         dispose()
         result
     }
-    val iconSize = 16
+    val iconSize = 20
     val gap = 4
     val horizontalPadding = 2
     val timeSlots = when (model.mode) {
@@ -197,7 +197,7 @@ private fun menuBarLayout(model: MenuBarTimer): MenuBarLayout {
         TimerMode.STOPWATCH -> maxOf(8, model.timeLabel.length)
         null -> 0
     }
-    val digitAdvance = maxOf(metrics.charWidth('0'), metrics.charWidth(':'))
+    val digitAdvance = ('0'..'9').maxOf { metrics.charWidth(it) }.coerceAtLeast(metrics.charWidth(':'))
     val textWidth = if (model.renderTime) {
         digitAdvance * timeSlots
     } else {
@@ -264,8 +264,8 @@ private fun drawStatusIcon(
 ) {
     val inset = 2
     val diameter = size - inset * 2
-    graphics.stroke = BasicStroke(1.35f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-    graphics.color = Color(0, 0, 0, 92)
+    graphics.stroke = BasicStroke(2.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+    graphics.color = Color(0, 0, 0, 144)
     graphics.drawOval(x + inset, y + inset, diameter, diameter)
     graphics.color = Color.BLACK
 
@@ -276,9 +276,14 @@ private fun drawStatusIcon(
         val centerY = y + size / 2
         when {
             model.status == TimerStatus.PAUSED -> {
-                val barHeight = 5
-                graphics.fillRoundRect(centerX - 3, centerY - barHeight / 2, 1, barHeight, 1, 1)
-                graphics.fillRoundRect(centerX + 2, centerY - barHeight / 2, 1, barHeight, 1, 1)
+                val barHeight = 8
+                graphics.fillRoundRect(centerX - 3, centerY - barHeight / 2, 2, barHeight, 1, 1)
+                graphics.fillRoundRect(centerX + 1, centerY - barHeight / 2, 2, barHeight, 1, 1)
+            }
+            model.mode == TimerMode.STOPWATCH -> {
+                graphics.stroke = BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
+                graphics.drawLine(centerX, centerY - 4, centerX, centerY)
+                graphics.drawLine(centerX, centerY, centerX + 3, centerY + 2)
             }
             model.phase == TimerPhase.FOCUS -> graphics.fillOval(
                 centerX - 2,
@@ -287,20 +292,15 @@ private fun drawStatusIcon(
                 4,
             )
             else -> {
-                graphics.fillOval(centerX - 3, centerY - 3, 6, 6)
+                graphics.fillOval(centerX - 4, centerY - 4, 8, 8)
                 graphics.color = Color(0, 0, 0, 0)
                 graphics.composite = java.awt.AlphaComposite.Clear
-                graphics.fillOval(centerX - 1, centerY - 3, 5, 5)
+                graphics.fillOval(centerX, centerY - 4, 7, 7)
                 graphics.composite = java.awt.AlphaComposite.SrcOver
                 graphics.color = Color.BLACK
             }
         }
-        if (model.mode == TimerMode.STOPWATCH) {
-            graphics.stroke = BasicStroke(1.2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND)
-            graphics.drawLine(x + size - 4, y + 5, x + size - 4, y + 2)
-            graphics.drawLine(x + size - 4, y + 2, x + size - 6, y + 4)
-            graphics.drawLine(x + size - 4, y + 2, x + size - 2, y + 4)
-        }
+
     } else {
         graphics.fillOval(x + size / 2 - 2, y + size / 2 - 2, 4, 4)
     }
@@ -312,8 +312,8 @@ private fun drawStatusIcon(
 }
 
 private fun menuBarFont(size: Float): Font {
-    val preferred = Font(".AppleSystemUIFontMonospaced", Font.PLAIN, size.roundToInt())
-    return if (preferred.family == "Dialog") Font(Font.MONOSPACED, Font.PLAIN, size.roundToInt()) else preferred
+    val preferred = Font("Helvetica Neue", Font.BOLD, size.roundToInt())
+    return if (preferred.family == "Dialog") Font(Font.SANS_SERIF, Font.BOLD, size.roundToInt()) else preferred
 }
 
 private fun formatCountdown(seconds: Int): String {

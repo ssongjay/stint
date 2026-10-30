@@ -84,6 +84,7 @@ class TimerLiveNotificationTest {
             ),
         )
 
+        writeIconPreview()
         val built = requireNotNull(timerNotification.build(state, localNow))
         val remainingMillis = 1_500_000L - 3_234L
 
@@ -92,6 +93,7 @@ class TimerLiveNotificationTest {
         assertTrue(built.extras.getBoolean(Notification.EXTRA_CHRONOMETER_COUNT_DOWN))
         assertTrue(built.extras.getBoolean(TimerNotificationPolicy.EXTRA_REQUEST_PROMOTED_ONGOING))
         assertTrue(built.flags and Notification.FLAG_ONGOING_EVENT != 0)
+        assertEquals(R.drawable.ic_stint_notification, built.smallIcon.resId)
         assertNull(built.contentView)
         assertNull(built.bigContentView)
         assertNull(built.headsUpContentView)
@@ -118,6 +120,23 @@ class TimerLiveNotificationTest {
         assertFalse(pausedNotification.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
         assertFalse(pausedNotification.extras.getBoolean(TimerNotificationPolicy.EXTRA_REQUEST_PROMOTED_ONGOING))
         assertEquals(2, pausedNotification.actions.size)
+        assertEquals(R.drawable.ic_stint_notification_paused, pausedNotification.smallIcon.resId)
+
+        val breakNotification = requireNotNull(
+            timerNotification.build(
+                state(
+                    serverNow = 20_000L,
+                    timer = timer(
+                        status = TimerStatus.RUNNING,
+                        phase = TimerPhase.SHORT_BREAK,
+                        targetSeconds = 300,
+                        runningSinceEpochMs = 20_000L,
+                    ),
+                ),
+                1_700_000_000_000L,
+            ),
+        )
+        assertEquals(R.drawable.ic_stint_notification_break, breakNotification.smallIcon.resId)
 
         val offline = paused.copy(connection = ConnectionStatus.OFFLINE)
         val offlineNotification = requireNotNull(timerNotification.build(offline, 1_700_000_000_000L))
@@ -188,6 +207,28 @@ class TimerLiveNotificationTest {
         }
     }
 
+    private fun writeIconPreview() {
+        val bitmap = android.graphics.Bitmap.createBitmap(480, 200, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        canvas.drawColor(android.graphics.Color.rgb(245, 240, 230))
+        paint.color = android.graphics.Color.rgb(27, 40, 34)
+        canvas.drawRect(0f, 100f, 480f, 200f, paint)
+        listOf(R.drawable.ic_stint_notification, R.drawable.ic_stint_notification_paused,
+            R.drawable.ic_stint_notification_break).forEachIndexed { index, id ->
+            listOf(0, 100).forEach { y ->
+                val icon = requireNotNull(context.getDrawable(id)).mutate()
+                icon.setTint(if (y == 0) android.graphics.Color.rgb(27, 40, 34) else android.graphics.Color.rgb(245, 240, 230))
+                icon.setBounds(index * 160 + 40, y + 14, index * 160 + 112, y + 86)
+                icon.draw(canvas)
+            }
+        }
+        File(context.filesDir, "chip-icons-preview.png").outputStream().use {
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it)
+        }
+        bitmap.recycle()
+    }
+
     private fun awaitPostedNotification(): Notification {
         val deadline = SystemClock.elapsedRealtime() + POST_TIMEOUT_MS
         while (SystemClock.elapsedRealtime() < deadline) {
@@ -229,6 +270,7 @@ class TimerLiveNotificationTest {
 
     private fun timer(
         status: TimerStatus,
+        phase: TimerPhase = TimerPhase.FOCUS,
         mode: TimerMode = TimerMode.COUNTDOWN,
         targetSeconds: Int = 1_500,
         accumulatedMillis: Long = 0L,
@@ -237,7 +279,7 @@ class TimerLiveNotificationTest {
         id = TIMER_ID,
         subjectId = SUBJECT_ID,
         status = status,
-        phase = TimerPhase.FOCUS,
+        phase = phase,
         mode = mode,
         targetSeconds = targetSeconds,
         accumulatedMillis = accumulatedMillis,

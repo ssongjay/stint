@@ -40,7 +40,7 @@ class TimerNotification(context: Context) {
             TimerPhase.LONG_BREAK -> "긴 휴식"
         }
         val builder = Notification.Builder(appContext, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_stint_notification)
+            .setSmallIcon(timerStatusIcon(timer.status, timer.phase))
             .setContentTitle("$phaseName · $subjectName")
             .setContentText(presentation.contentText)
             .setCategory(Notification.CATEGORY_PROGRESS)
@@ -119,6 +119,12 @@ class TimerNotification(context: Context) {
                 Notification.Action.Builder(null as Icon?, endAction.second, pendingIntent).build(),
             )
         }
+    }
+
+    private fun timerStatusIcon(status: TimerStatus, phase: TimerPhase): Int = when {
+        status == TimerStatus.PAUSED -> R.drawable.ic_stint_notification_paused
+        phase == TimerPhase.FOCUS -> R.drawable.ic_stint_notification
+        else -> R.drawable.ic_stint_notification_break
     }
 
     private fun actionIntent(action: String, state: ClientState): PendingIntent? {

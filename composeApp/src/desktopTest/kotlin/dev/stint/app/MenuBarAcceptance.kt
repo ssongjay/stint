@@ -365,7 +365,7 @@ object MenuBarAcceptance {
             g.color = ink
             g.drawString(label, 12, 20)
 
-            val source = oneX(renderMenuBarTimer(model))
+            val source = (renderMenuBarTimer(model) as MultiResolutionImage).resolutionVariants.last() as BufferedImage
             g.drawImage(source, 12, 29, null)
             g.drawImage(source, width - source.width * 3 - 12, 5, source.width * 3, source.height * 3, null)
 
@@ -438,9 +438,9 @@ object MenuBarAcceptance {
                 g.font = Font(Font.SANS_SERIF, Font.BOLD, 18)
                 g.color = if (index % 2 == 0) ink else paper
                 g.drawString(label, 22, y + 30)
-                val source = oneX(renderMenuBarTimer(model))
+                val source = (renderMenuBarTimer(model) as MultiResolutionImage).resolutionVariants.last() as BufferedImage
                 val display = if (index % 2 == 0) source else tint(source, paper)
-                g.drawImage(display, 230, y + 15, display.width * 3, display.height * 3, null)
+                g.drawImage(display, 230, y + 15, display.width, display.height, null)
                 g.font = Font(Font.SANS_SERIF, Font.PLAIN, 14)
                 g.drawString(model.tooltip, 520, y + 31)
             }
