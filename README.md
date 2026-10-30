@@ -13,6 +13,7 @@ Compose Multiplatform 화면과 Ktor/MySQL 서버를 사용하며 iCloud에 의�
 - HTTPS snapshot과 WebSocket을 통한 여러 기기 동기화
 - 접힘·펼침·테이블탑 자세에 맞춘 Android 폴더블 레이아웃
 - macOS 메뉴바의 진행 링·남은 시간 표시와 일시정지·재개·종료
+- Android 실시간 타이머 칩·Now Bar 표시 요청, 알림 제어와 백그라운드 동기화
 
 ## 구성
 

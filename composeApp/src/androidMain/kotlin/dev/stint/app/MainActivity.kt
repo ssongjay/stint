@@ -1,8 +1,18 @@
 package dev.stint.app
 
 import android.app.Application
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import dev.stint.shared.TimerStatus
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
 import android.os.Bundle
-import android.content.pm.ApplicationInfo
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
@@ -11,7 +21,6 @@ import androidx.compose.runtime.produceState
 import androidx.lifecycle.AndroidViewModel
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
-import dev.stint.app.client.StintController
 import dev.stint.app.ui.FoldPosture
 import dev.stint.app.ui.StintApp
 import io.ktor.client.HttpClient
@@ -22,16 +31,22 @@ import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.collect
-import java.util.UUID
 
 class MainActivity : ComponentActivity() {
     private val viewModel: StintViewModel by viewModels()
     private val controller get() = viewModel.controller
-    private val notification by lazy { TimerNotification(this) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        notification.requestPermissionIfNeeded()
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 401)
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                controller.state.map { it.snapshot?.timer?.status?.let { status -> status != TimerStatus.IDLE } == true }
+                    .distinctUntilChanged().collect { active -> if (active) startTimerStatus() }
+            }
+        }
         val windowInfoTracker = WindowInfoTracker.getOrCreate(this)
         setContent {
             val foldPosture by produceState(FoldPosture(), windowInfoTracker) {
@@ -42,26 +57,35 @@ class MainActivity : ComponentActivity() {
                         .toFoldPosture(resources.displayMetrics.density)
                 }
             }
-            TimerNotificationEffect(controller, notification)
             StintApp(controller, foldPosture)
+        }
+    }
+    override fun onResume() {
+        super.onResume()
+        startTimerStatus()
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 401 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+            startTimerStatus()
+        }
+    }
+
+    private fun startTimerStatus() {
+        if (controller.state.value.snapshot?.timer?.status?.let { it != TimerStatus.IDLE } != true) return
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        if (TimerStatusService.running) return
+        try {
+            startForegroundService(Intent(this, TimerStatusService::class.java))
+        } catch (_: IllegalStateException) {
+            // A concurrent transition to the background may revoke the foreground-start exemption.
         }
     }
 }
 
 class StintViewModel(application: Application) : AndroidViewModel(application) {
-    val controller =
-        StintController(
-            client = androidHttpClient(),
-            localStore = AndroidLocalStore(application.applicationContext),
-            clock = System::currentTimeMillis,
-            newId = { UUID.randomUUID().toString() },
-            allowInsecureLoopback = application.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0,
-        )
-
-    override fun onCleared() {
-        controller.close()
-        super.onCleared()
-    }
+    val controller get() = (getApplication<Application>() as StintApplication).controller
 }
 
 internal data class FoldFeatureGeometry(
@@ -101,7 +125,7 @@ private fun FoldingFeature?.toFoldPosture(density: Float): FoldPosture {
     ), density)
 }
 
-private fun androidHttpClient(): HttpClient = HttpClient(OkHttp) {
+internal fun androidHttpClient(): HttpClient = HttpClient(OkHttp) {
     expectSuccess = false
     install(ContentNegotiation) {
         json(Json { ignoreUnknownKeys = true; explicitNulls = false })
