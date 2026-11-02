@@ -131,12 +131,14 @@ class StintRepository(
             """
             INSERT INTO subjects(
               id, name, color_hex, focus_seconds, short_break_seconds, long_break_seconds,
-              long_break_every, archived, created_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+              long_break_every, archived, pomodoro_enabled, auto_start_break, created_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE
               name = VALUES(name), color_hex = VALUES(color_hex), focus_seconds = VALUES(focus_seconds),
               short_break_seconds = VALUES(short_break_seconds), long_break_seconds = VALUES(long_break_seconds),
-              long_break_every = VALUES(long_break_every), archived = VALUES(archived)
+              long_break_every = VALUES(long_break_every), archived = VALUES(archived),
+              pomodoro_enabled = IF(?, VALUES(pomodoro_enabled), pomodoro_enabled),
+              auto_start_break = IF(?, VALUES(auto_start_break), auto_start_break)
             """.trimIndent(),
         ).use { statement ->
             statement.setString(1, request.subject.id)
@@ -147,7 +149,11 @@ class StintRepository(
             statement.setInt(6, request.subject.longBreakSeconds)
             statement.setInt(7, request.subject.longBreakEvery)
             statement.setBoolean(8, request.subject.archived)
-            statement.setLong(9, now)
+            statement.setBoolean(9, request.subject.pomodoroEnabled)
+            statement.setBoolean(10, request.subject.autoStartBreak)
+            statement.setLong(11, now)
+            statement.setBoolean(12, request.includesFlowSettings)
+            statement.setBoolean(13, request.includesFlowSettings)
             statement.executeUpdate()
         }
     }
@@ -252,7 +258,7 @@ class StintRepository(
         statement.executeQuery(
             """
             SELECT id, name, color_hex, focus_seconds, short_break_seconds, long_break_seconds,
-                   long_break_every, archived
+                   long_break_every, archived, pomodoro_enabled, auto_start_break
             FROM subjects ORDER BY archived, created_at_ms, id
             """.trimIndent(),
         ).use { result -> buildList { while (result.next()) add(result.subject()) } }
@@ -261,7 +267,7 @@ class StintRepository(
     private fun readSubject(connection: Connection, id: String): Subject? = connection.prepareStatement(
         """
         SELECT id, name, color_hex, focus_seconds, short_break_seconds, long_break_seconds,
-               long_break_every, archived
+               long_break_every, archived, pomodoro_enabled, auto_start_break
         FROM subjects WHERE id = ?
         """.trimIndent(),
     ).use { statement ->
@@ -278,6 +284,8 @@ class StintRepository(
         longBreakSeconds = getInt("long_break_seconds"),
         longBreakEvery = getInt("long_break_every"),
         archived = getBoolean("archived"),
+        pomodoroEnabled = getBoolean("pomodoro_enabled"),
+        autoStartBreak = getBoolean("auto_start_break"),
     )
 
     private fun readTimer(connection: Connection, forUpdate: Boolean = false): TimerState {

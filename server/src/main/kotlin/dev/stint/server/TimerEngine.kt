@@ -125,8 +125,25 @@ object TimerEngine {
             mode = timer.mode,
             deviceName = timer.controllingDeviceName.orEmpty(),
         )
+        if (!subject.pomodoroEnabled) {
+            return Settlement(
+                timer = idleFocus(timer.copy(completedFocusCount = completedCount), subject),
+                session = session,
+            )
+        }
         val breakEnd = deadline + breakSeconds * 1000L
-        val nextTimer = if (nowEpochMs >= breakEnd) {
+        val nextTimer = if (!subject.autoStartBreak) {
+            timer.copy(
+                status = TimerStatus.PAUSED,
+                phase = breakPhase,
+                mode = TimerMode.COUNTDOWN,
+                targetSeconds = breakSeconds,
+                accumulatedMillis = 0,
+                runningSinceEpochMs = null,
+                startedAtEpochMs = deadline,
+                completedFocusCount = completedCount,
+            )
+        } else if (nowEpochMs >= breakEnd) {
             idleFocus(timer.copy(completedFocusCount = completedCount), subject)
         } else {
             timer.copy(

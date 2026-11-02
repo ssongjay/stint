@@ -63,6 +63,62 @@ class TimerEngineTest {
     }
 
     @Test
+    fun `focus completion ends at idle when pomodoro flow is disabled`() {
+        val timer = runningTimer(runningSince = 1_000).copy(completedFocusCount = 1)
+
+        val result = TimerEngine.settleExpired(
+            timer,
+            subject.copy(pomodoroEnabled = false),
+            11_500,
+        )
+
+        assertNotNull(result)
+        assertEquals(10, result.session?.durationSeconds)
+        assertEquals(TimerStatus.IDLE, result.timer.status)
+        assertEquals(TimerPhase.FOCUS, result.timer.phase)
+        assertEquals(2, result.timer.completedFocusCount)
+        assertNull(TimerEngine.settleExpired(result.timer, subject, 20_000))
+    }
+
+    @Test
+    fun `focus completion prepares a paused break when automatic start is disabled`() {
+        val timer = runningTimer(runningSince = 1_000).copy(completedFocusCount = 1)
+
+        val result = TimerEngine.settleExpired(
+            timer,
+            subject.copy(autoStartBreak = false),
+            100_000,
+        )
+
+        assertNotNull(result)
+        assertEquals(TimerStatus.PAUSED, result.timer.status)
+        assertEquals(TimerPhase.LONG_BREAK, result.timer.phase)
+        assertEquals(5, result.timer.targetSeconds)
+        assertEquals(0, result.timer.accumulatedMillis)
+        assertNull(result.timer.runningSinceEpochMs)
+        assertEquals(11_000, result.timer.startedAtEpochMs)
+        assertEquals(2, result.timer.completedFocusCount)
+        assertNull(TimerEngine.settleExpired(result.timer, subject, 200_000))
+    }
+
+    @Test
+    fun `a prepared break starts from zero when resumed manually`() {
+        val prepared = TimerEngine.settleExpired(
+            runningTimer(runningSince = 1_000),
+            subject.copy(autoStartBreak = false),
+            11_500,
+        )!!.timer
+
+        val resumed = TimerEngine.resume(prepared, 20_000, "android", "Fold")
+
+        assertEquals(TimerStatus.RUNNING, resumed.status)
+        assertEquals(TimerPhase.SHORT_BREAK, resumed.phase)
+        assertEquals(0, resumed.accumulatedMillis)
+        assertEquals(20_000, resumed.runningSinceEpochMs)
+        assertEquals("android", resumed.controllingDeviceId)
+    }
+
+    @Test
     fun `finishing a countdown caps the record at its target`() {
         val timer = runningTimer(runningSince = 1_000)
 

@@ -24,6 +24,8 @@ data class Subject(
     val longBreakSeconds: Int = 900,
     val longBreakEvery: Int = 4,
     val archived: Boolean = false,
+    val pomodoroEnabled: Boolean = true,
+    val autoStartBreak: Boolean = true,
 )
 
 @Serializable
@@ -90,7 +92,16 @@ data class TimerCommand(
 )
 
 @Serializable
-data class SaveSubjectRequest(val context: MutationContext, val subject: Subject)
+data class SaveSubjectRequest(
+    val context: MutationContext,
+    val subject: Subject,
+    /**
+     * Older clients do not send the Pomodoro fields. Keeping this false for a
+     * missing field prevents an unrelated subject edit from resetting settings
+     * that were saved by a newer client.
+     */
+    val includesFlowSettings: Boolean = false,
+)
 
 @Serializable
 data class SaveMemoRequest(val context: MutationContext, val memo: String)

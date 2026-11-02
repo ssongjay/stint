@@ -91,6 +91,62 @@ class MySqlRepositoryIntegrationTest {
     }
 
     @Test
+    fun `pomodoro flow settings persist and an old client edit preserves them`() {
+        val original = repository.snapshot().subjects.first { it.id == "study" }
+        val saved = repository.saveSubject(
+            SaveSubjectRequest(
+                context = context("flow-settings", "mac", repository.snapshot().revision),
+                subject = original.copy(pomodoroEnabled = false, autoStartBreak = false),
+                includesFlowSettings = true,
+            ),
+        ).snapshot
+
+        val configured = saved.subjects.first { it.id == original.id }
+        assertFalse(configured.pomodoroEnabled)
+        assertFalse(configured.autoStartBreak)
+
+        val editedByOldClient = repository.saveSubject(
+            SaveSubjectRequest(
+                context = context("old-client-edit", "android", saved.revision),
+                subject = configured.copy(
+                    name = "이름만 변경",
+                    pomodoroEnabled = true,
+                    autoStartBreak = true,
+                ),
+            ),
+        ).snapshot.subjects.first { it.id == original.id }
+
+        assertEquals("이름만 변경", editedByOldClient.name)
+        assertFalse(editedByOldClient.pomodoroEnabled)
+        assertFalse(editedByOldClient.autoStartBreak)
+    }
+
+    @Test
+    fun `subject flow column migration is idempotent and defaults preserve current behavior`() {
+        database.migrate()
+        database.migrate()
+
+        val columns = database.connection().use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT column_name FROM information_schema.columns
+                WHERE table_schema = DATABASE() AND table_name = 'subjects'
+                  AND column_name IN ('pomodoro_enabled', 'auto_start_break')
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { result ->
+                    buildSet { while (result.next()) add(result.getString(1)) }
+                }
+            }
+        }
+
+        assertEquals(setOf("pomodoro_enabled", "auto_start_break"), columns)
+        val seeded = repository.snapshot().subjects.first { it.id == "study" }
+        assertTrue(seeded.pomodoroEnabled)
+        assertTrue(seeded.autoStartBreak)
+    }
+
+    @Test
     fun `a new repository settles a timer that elapsed while the server was down`() {
         repository.execute(
             TimerCommand(

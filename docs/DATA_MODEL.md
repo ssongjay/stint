@@ -22,6 +22,11 @@ focus 타이머가 만료되면 정확한 deadline으로 기록을 한 번 만�
 통계에 넣지 않는다. 수동 종료는 실제 집중 초만 기록하며 1초 미만은 만들지 않는다.
 동일 timer id의 기록은 PK에서도 중복되지 않는다. 타이머는 매초 저장하지 않는다.
 
+주제의 `pomodoroEnabled`와 `autoStartBreak`는 서버에 저장되는 동기화 설정이다.
+둘 다 기본값은 true이며 기존 DB에는 누락된 컬럼만 추가한다. 새 클라이언트는
+`SaveSubjectRequest.includesFlowSettings=true`로 두 설정의 저장 의도를 표시한다.
+이 필드가 없는 구버전 요청은 기존 주제를 편집해도 저장된 흐름 설정을 유지한다.
+
 클라이언트는 같은 연결 identity에서 낮은 revision을 폐기한다. 서버 연결 변경과
 accepted snapshot 저장은 같은 mutex에서 처리해 이전 서버 응답이 새 서버 캐시를
 오염시키지 못하게 한다. UTC epoch milliseconds를 보관하고 표시·날짜 집계는

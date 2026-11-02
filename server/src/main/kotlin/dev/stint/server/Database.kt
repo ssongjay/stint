@@ -31,6 +31,7 @@ class Database(private val config: ServerConfig) : AutoCloseable {
                 schemaStatements.forEach { sql ->
                     connection.createStatement().use { it.execute(sql) }
                 }
+                ensureSubjectFlowColumns(connection)
                 seed(connection)
                 connection.commit()
             } catch (error: Throwable) {
@@ -42,6 +43,36 @@ class Database(private val config: ServerConfig) : AutoCloseable {
 
     override fun close() {
         dataSource.close()
+    }
+
+    private fun ensureSubjectFlowColumns(connection: Connection) {
+        ensureColumn(
+            connection,
+            column = "pomodoro_enabled",
+            definition = "BOOLEAN NOT NULL DEFAULT TRUE",
+        )
+        ensureColumn(
+            connection,
+            column = "auto_start_break",
+            definition = "BOOLEAN NOT NULL DEFAULT TRUE",
+        )
+    }
+
+    private fun ensureColumn(connection: Connection, column: String, definition: String) {
+        val exists = connection.prepareStatement(
+            """
+            SELECT 1 FROM information_schema.columns
+            WHERE table_schema = DATABASE() AND table_name = 'subjects' AND column_name = ?
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, column)
+            statement.executeQuery().use { it.next() }
+        }
+        if (!exists) {
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE subjects ADD COLUMN $column $definition")
+            }
+        }
     }
 
     private fun seed(connection: Connection) {
@@ -93,6 +124,8 @@ class Database(private val config: ServerConfig) : AutoCloseable {
           long_break_seconds INT NOT NULL,
           long_break_every INT NOT NULL,
           archived BOOLEAN NOT NULL DEFAULT FALSE,
+          pomodoro_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+          auto_start_break BOOLEAN NOT NULL DEFAULT TRUE,
           created_at_ms BIGINT NOT NULL
         ) ENGINE=InnoDB
         """.trimIndent(),
