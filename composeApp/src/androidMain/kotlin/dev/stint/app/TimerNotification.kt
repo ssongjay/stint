@@ -101,7 +101,7 @@ class TimerNotification(context: Context) {
         val timer = state.snapshot?.timer ?: return
         val toggleAction = when (timer.status) {
             TimerStatus.RUNNING -> TimerNotificationPolicy.ACTION_PAUSE to "일시정지"
-            TimerStatus.PAUSED -> TimerNotificationPolicy.ACTION_RESUME to "계속하기"
+            TimerStatus.PAUSED -> TimerNotificationPolicy.ACTION_RESUME to timerResumeActionLabel(timer)
             TimerStatus.IDLE -> null
         }
         toggleAction?.let { (action, label) ->

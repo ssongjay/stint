@@ -200,8 +200,8 @@ private fun TimerPopoverContent(
     val phaseLabel = when {
         idle -> "다음 집중"
         timer.phase == TimerPhase.FOCUS -> if (timer.status == TimerStatus.PAUSED) "집중 · 일시정지" else "집중 중"
-        timer.phase == TimerPhase.SHORT_BREAK -> "짧은 휴식"
-        else -> "긴 휴식"
+        timer.phase == TimerPhase.SHORT_BREAK -> if (timer.isBreakWaitingToStart()) "짧은 휴식 · 시작 대기" else "짧은 휴식"
+        else -> if (timer.isBreakWaitingToStart()) "긴 휴식 · 시작 대기" else "긴 휴식"
     }
     val canMutate = state.connection == ConnectionStatus.CONNECTED && !state.working
     Surface(
@@ -274,7 +274,7 @@ private fun TimerPopoverContent(
                         Text("일시정지")
                     }
                     TimerStatus.PAUSED -> Button(onClick = controller::resume, enabled = canMutate) {
-                        Text("계속하기")
+                        Text(if (timer.isBreakWaitingToStart()) "휴식 시작" else "계속하기")
                     }
                 }
                 if (!idle) {

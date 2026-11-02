@@ -13,6 +13,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.view.PixelCopy
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.test.core.app.ActivityScenario
@@ -87,7 +88,60 @@ class FoldableAcceptanceTest {
         val sessions = connected.snapshot!!.sessions
         assertEquals("Session identities must be unique", sessions.size, sessions.map { it.id }.toSet().size)
         assertPhysicalLayout(launched, expectedLayout)
+        if (argument("showFlowControls", "false") == "true") revealPomodoroControls()
         writePrivateWindowScreenshot(launched, shotName)
+    }
+
+    /** Scrolls only this app's existing workbench; never invokes timer or preference commands. */
+    private fun revealPomodoroControls() {
+        val observations = org.json.JSONArray()
+        repeat(12) { attempt ->
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            if (root?.packageName?.toString() != context.packageName) {
+                observations.put(JSONObject().put("attempt", attempt).put("rootPackage", root?.packageName))
+                SystemClock.sleep(200)
+                return@repeat
+            }
+            val nodes = mutableListOf<AccessibilityNodeInfo>()
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            while (queue.isNotEmpty() && nodes.size < 4096) {
+                val node = queue.removeFirst()
+                nodes.add(node)
+                repeat(node.childCount) { index -> node.getChild(index)?.let(queue::addLast) }
+            }
+            fun find(label: String) = nodes.firstOrNull {
+                (it.text?.toString().orEmpty() + " " + it.contentDescription?.toString().orEmpty()).contains(label)
+            }
+            val pomodoro = find("뽀모도로 모드")
+            val automatic = find("휴식 자동 시작")
+            val viewport = android.graphics.Rect().also(root::getBoundsInScreen)
+            fun visible(node: AccessibilityNodeInfo?): Boolean {
+                if (node == null || !node.isVisibleToUser) return false
+                val bounds = android.graphics.Rect().also(node::getBoundsInScreen)
+                return !bounds.isEmpty && viewport.contains(bounds)
+            }
+            if (visible(pomodoro) && visible(automatic)) return
+            observations.put(JSONObject().put("attempt", attempt).put("nodes", nodes.size)
+                .put("pomodoroFound", pomodoro != null).put("automaticFound", automatic != null)
+                .put("pomodoroVisible", visible(pomodoro)).put("automaticVisible", visible(automatic))
+                .put("scrollables", nodes.count { it.isScrollable }))
+            var parent = (automatic ?: pomodoro)?.parent
+            while (parent != null && !parent.isScrollable) parent = parent.parent
+            if (parent != null) {
+                parent.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+            } else {
+                // Compose may omit off-screen virtual descendants; scroll the visible workbench
+                // first, then resolve the switches from the fresh accessibility tree.
+                nodes.firstOrNull { node ->
+                    node.isScrollable && node.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
+                }
+            }
+            SystemClock.sleep(300)
+        }
+        File(context.filesDir, "pomodoro-controls-diagnostic.json").writeText(observations.toString())
+        scenario?.let { writePrivateWindowScreenshot(it, "pomodoro-controls-failure") }
+        error("Both Pomodoro switches must be reachable in the current app viewport")
     }
 
     @Test

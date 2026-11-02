@@ -145,6 +145,8 @@ internal fun SubjectEditor(
                                     longBreakSeconds = long!!,
                                     longBreakEvery = every!!,
                                     archived = original?.archived ?: false,
+                                    pomodoroEnabled = original?.pomodoroEnabled ?: true,
+                                    autoStartBreak = original?.autoStartBreak ?: true,
                                 ),
                             )
                         }

@@ -121,6 +121,18 @@ internal fun FocusTab(
                 onSkipBreak = controller::skipBreak,
                 onTimeSettings = onTimeSettings,
             )
+            activeSubject?.let { subject ->
+                Spacer(Modifier.height(22.dp))
+                PomodoroControls(
+                    subject = subject,
+                    enabled = connected && !dialAdjusting,
+                    countdown = (if (timer.status == TimerStatus.IDLE) selectedMode else timer.mode) == TimerMode.COUNTDOWN,
+                    onSave = { updated ->
+                        if (controller.state.value.snapshot?.revision == snapshot?.revision) controller.saveSubject(updated)
+                        else controller.refresh()
+                    },
+                )
+            }
             Spacer(Modifier.height(24.dp))
             ThinRule()
             Spacer(Modifier.height(18.dp))
@@ -301,6 +313,18 @@ private fun TabletopFocus(
                     onClick = onTimeSettings,
                     modifier = Modifier.heightIn(min = 48.dp),
                 ) { Text("시간 설정") }
+                activeSubject?.let { subject ->
+                    Spacer(Modifier.height(12.dp))
+                    PomodoroControls(
+                        subject = subject,
+                        enabled = canMutate && !dialAdjusting,
+                        countdown = (if (timer.status == TimerStatus.IDLE) selectedMode else timer.mode) == TimerMode.COUNTDOWN,
+                        onSave = { updated ->
+                            if (controller.state.value.snapshot?.revision == state.snapshot?.revision) controller.saveSubject(updated)
+                            else controller.refresh()
+                        },
+                    )
+                }
                 Spacer(Modifier.height(22.dp))
                 ThinRule()
                 Spacer(Modifier.height(14.dp))
@@ -541,7 +565,9 @@ private fun TimerActions(
                 OutlinedButton(onClick = onFinish, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("마치기") }
             }
             status == TimerStatus.PAUSED -> {
-                Button(onClick = onResume, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("이어서 하기") }
+                Button(onClick = onResume, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) {
+                    Text(if (timer.phase != TimerPhase.FOCUS && timer.accumulatedMillis == 0L) "휴식 시작" else "이어서 하기")
+                }
                 OutlinedButton(onClick = onFinish, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("마치기") }
             }
             else -> Unit

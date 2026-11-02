@@ -70,6 +70,27 @@ class MenuBarTimerTest {
     }
 
     @Test
+    fun `prepared break is labeled as waiting with an empty progress ring`() {
+        val model = menuBarTimer(
+            state(
+                TimerState(
+                    id = "timer", subjectId = "study", status = TimerStatus.PAUSED,
+                    phase = TimerPhase.SHORT_BREAK, mode = TimerMode.COUNTDOWN,
+                    targetSeconds = 300, accumulatedMillis = 0, runningSinceEpochMs = null,
+                    startedAtEpochMs = 10_000,
+                ),
+            ),
+        )
+
+        assertEquals("짧은 휴식 · 시작 대기", model.statusLabel)
+        assertEquals("휴식 시작", model.toggleLabel)
+        assertEquals("시작 전 · 05:00 휴식", model.progressLabel)
+        assertEquals(0f, model.progressFraction)
+        assertTrue(model.canToggle)
+        assertTrue(model.canSkipBreak)
+    }
+
+    @Test
     fun `offline cached timer never appears as live time`() {
         val active = state(
             TimerState(status = TimerStatus.RUNNING, runningSinceEpochMs = 5_000),

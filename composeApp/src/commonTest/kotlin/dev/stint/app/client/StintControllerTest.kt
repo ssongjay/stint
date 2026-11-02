@@ -270,7 +270,7 @@ class StintControllerTest {
         controller.setTimerDuration(1_800)
         releaseFirstRequest.complete(Unit)
 
-        withTimeout(2_000) { controller.state.first { it.message?.contains("시간 변경을 보내지 않았어요") == true } }
+        withTimeout(2_000) { controller.state.first { it.message?.contains("변경을 보내지 않았어요") == true } }
 
         assertEquals(0, durationRequests)
         assertEquals("timer-b", controller.state.value.snapshot?.timer?.id)
@@ -314,6 +314,8 @@ class StintControllerTest {
             shortBreakSeconds = 420,
             longBreakSeconds = 1_200,
             longBreakEvery = 3,
+            pomodoroEnabled = false,
+            autoStartBreak = false,
         )
         val initial = snapshot(serverNow = 1_000L, revision = 3).copy(subjects = listOf(subject))
         val updated = initial.copy(revision = 4, subjects = listOf(subject.copy(focusSeconds = 1_800)))
@@ -344,6 +346,7 @@ class StintControllerTest {
 
         assertEquals(3, saved?.context?.expectedRevision)
         assertEquals(subject.copy(focusSeconds = 1_800), saved?.subject)
+        assertEquals(true, saved?.includesFlowSettings)
         assertEquals(ConnectionStatus.CONNECTED, controller.state.value.connection)
         controller.close()
     }
@@ -388,7 +391,7 @@ class StintControllerTest {
         withTimeout(2_000) { blockerStarted.await() }
         controller.setSubjectFocusDuration("study", 1_800, expectedRevision = 1)
         releaseBlocker.complete(Unit)
-        withTimeout(2_000) { controller.state.first { it.message?.contains("시간 변경을 보내지 않았어요") == true } }
+        withTimeout(2_000) { controller.state.first { it.message?.contains("변경을 보내지 않았어요") == true } }
 
         assertEquals(0, subjectRequests)
         assertEquals("timer-b", controller.state.value.snapshot?.timer?.id)
@@ -675,6 +678,82 @@ class StintControllerTest {
         assertEquals(TimerClockStyle.ORBIT, store.loadClockStyle())
         assertTrue(controller.state.value.message.orEmpty().contains("시계 모양"))
         controller.close()
+    }
+
+    @Test
+    fun `flow preference save is explicit and applies synchronized acknowledgement without changing timer`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 3, status = TimerStatus.RUNNING)
+        val changed = initial.subjects.single().copy(pomodoroEnabled = false, autoStartBreak = false)
+        val updated = initial.copy(revision = 4, subjects = listOf(changed))
+        var saved: SaveSubjectRequest? = null
+        val store = FakeStore(settings(), initial)
+        val controller = StintController(
+            client = client { request ->
+                if (request.url.encodedPath.endsWith("/subjects")) {
+                    val body = when (val outgoing = request.body) {
+                        is TextContent -> outgoing.text
+                        is OutgoingContent.ByteArrayContent -> outgoing.bytes().decodeToString()
+                        else -> outgoing.toString()
+                    }
+                    saved = json.decodeFromString<SaveSubjectRequest>(body)
+                    jsonResponse(updated)
+                } else jsonResponse(initial)
+            },
+            localStore = store,
+            clock = { 1_000L },
+            newId = { "flow-preferences" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.saveSubject(changed)
+            withTimeout(2_000) { controller.state.first { it.snapshot?.revision == 4L && !it.working } }
+            assertEquals(true, saved?.includesFlowSettings)
+            assertEquals(3, saved?.context?.expectedRevision)
+            assertEquals(changed, controller.state.value.snapshot?.subjects?.single())
+            assertEquals(initial.timer, controller.state.value.snapshot?.timer)
+            assertEquals(changed, store.loadSnapshot()?.subjects?.single())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `rapid queued flow toggles cannot undo an acknowledged preference`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 3)
+        val subject = initial.subjects.single()
+        val changed = subject.copy(pomodoroEnabled = false)
+        val updated = initial.copy(revision = 4, subjects = listOf(changed))
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var requests = 0
+        val controller = StintController(
+            client = client { request ->
+                if (request.url.encodedPath.endsWith("/subjects")) {
+                    requests++
+                    started.complete(Unit)
+                    release.await()
+                    jsonResponse(updated)
+                } else jsonResponse(initial)
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "flow-toggle" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.saveSubject(changed)
+            withTimeout(2_000) { started.await() }
+            controller.saveSubject(subject.copy(autoStartBreak = false))
+            release.complete(Unit)
+            withTimeout(2_000) { controller.state.first { it.message?.contains("보내지 않았어요") == true } }
+            assertEquals(1, requests)
+            assertEquals(changed, controller.state.value.snapshot?.subjects?.single())
+        } finally {
+            release.complete(Unit)
+            controller.close()
+        }
     }
 
     private fun client(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): HttpClient =

@@ -67,6 +67,41 @@ class TimerNotificationPolicyTest {
     }
 
     @Test
+    fun `prepared break is presented as waiting to start`() {
+        val timer = TimerState(
+            id = "timer-a", subjectId = "subject", status = TimerStatus.PAUSED,
+            phase = TimerPhase.SHORT_BREAK, mode = TimerMode.COUNTDOWN,
+            targetSeconds = 300, accumulatedMillis = 0, runningSinceEpochMs = null,
+            startedAtEpochMs = 100_000,
+        )
+
+        val presentation = assertNotNull(timerNotificationPresentation(state(timer), localNowEpochMs = 500))
+
+        assertEquals("05:00", presentation.timeText)
+        assertEquals("시작 대기 · 05:00 휴식", presentation.contentText)
+        assertEquals("휴식 시작", timerResumeActionLabel(timer))
+        assertEquals(0, presentation.progress)
+        assertFalse(presentation.usesChronometer)
+        assertFalse(presentation.liveUpdateRequested)
+        assertNull(presentation.timeoutAfterMs)
+    }
+
+    @Test
+    fun `paused break with progress remains an ordinary paused timer`() {
+        val timer = TimerState(
+            id = "timer-a", subjectId = "subject", status = TimerStatus.PAUSED,
+            phase = TimerPhase.LONG_BREAK, mode = TimerMode.COUNTDOWN,
+            targetSeconds = 900, accumulatedMillis = 2_000, startedAtEpochMs = 100_000,
+        )
+
+        val presentation = assertNotNull(timerNotificationPresentation(state(timer), localNowEpochMs = 500))
+
+        assertEquals("일시정지 · 14:58 남음", presentation.contentText)
+        assertEquals("계속하기", timerResumeActionLabel(timer))
+        assertEquals(2, presentation.progress)
+    }
+
+    @Test
     fun `stopwatch converts server elapsed duration onto local clock epoch`() {
         val state = state(
             timer = TimerState(

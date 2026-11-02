@@ -4,6 +4,7 @@ import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionStatus
 import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerPhase
+import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
 import dev.stint.shared.elapsedMillis
 
@@ -132,19 +133,35 @@ internal fun timerNotificationPresentation(
         .coerceAtMost(Int.MAX_VALUE.toLong())
         .toInt()
     val time = formatNotificationDuration(remainingSeconds)
+    val waitingBreak = timer.isBreakWaitingToStart()
     return TimerNotificationPresentation(
         timeText = time,
-        contentText = if (running) "$time 남음" else "일시정지 · $time 남음",
+        contentText = when {
+            running -> "$time 남음"
+            waitingBreak -> "시작 대기 · $time 휴식"
+            else -> "일시정지 · $time 남음"
+        },
         usesChronometer = running,
         chronometerCountDown = running,
         whenEpochMs = addSaturated(localNowEpochMs, remainingMillis),
         timeoutAfterMs = remainingMillis.takeIf { running && it > 0L }?.let(::addOneSecondSaturated),
         progressMax = timer.targetSeconds.coerceAtLeast(0),
-        progress = elapsedSeconds.coerceIn(0, timer.targetSeconds.coerceAtLeast(0)),
+        progress = if (waitingBreak) 0 else elapsedSeconds.coerceIn(0, timer.targetSeconds.coerceAtLeast(0)),
         liveUpdateRequested = running && remainingMillis > 0L,
         actionsEnabled = actionsEnabled,
     )
 }
+
+internal fun timerResumeActionLabel(timer: TimerState): String =
+    if (timer.isBreakWaitingToStart()) "휴식 시작" else "계속하기"
+
+internal fun TimerState.isBreakWaitingToStart(): Boolean =
+    status == TimerStatus.PAUSED &&
+        phase != TimerPhase.FOCUS &&
+        mode == TimerMode.COUNTDOWN &&
+        accumulatedMillis == 0L &&
+        runningSinceEpochMs == null &&
+        startedAtEpochMs != null
 
 private fun formatNotificationDuration(totalSeconds: Int): String {
     val safe = totalSeconds.coerceAtLeast(0)

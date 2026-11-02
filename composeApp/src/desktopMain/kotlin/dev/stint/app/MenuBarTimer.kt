@@ -4,6 +4,7 @@ import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionStatus
 import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerPhase
+import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
 import dev.stint.shared.countdownClockReading
 import dev.stint.shared.elapsedMillis
@@ -113,7 +114,12 @@ internal fun menuBarTimer(state: ClientState): MenuBarTimer {
     val elapsedMillis = timer.elapsedMillis(state.serverNowEpochMs)
     val elapsedSeconds = (elapsedMillis / 1_000L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     val phaseLabel = timer.phase.label()
-    val runningLabel = if (timer.status == TimerStatus.PAUSED) "일시정지" else "진행 중"
+    val waitingBreak = timer.isBreakWaitingToStart()
+    val runningLabel = when {
+        waitingBreak -> "시작 대기"
+        timer.status == TimerStatus.PAUSED -> "일시정지"
+        else -> "진행 중"
+    }
     val statusLabel = "$phaseLabel · $runningLabel"
 
     val timeLabel: String
@@ -126,8 +132,12 @@ internal fun menuBarTimer(state: ClientState): MenuBarTimer {
             .coerceAtMost(Int.MAX_VALUE.toDouble())
             .toInt()
         timeLabel = formatCountdown(remainingSeconds)
-        progressLabel = "남음 $timeLabel · 경과 ${formatCountdown(elapsedSeconds)} / ${formatCountdown(timer.targetSeconds)}"
-        progressFraction = countdownClockReading(remainingSeconds, timer.targetSeconds).ringFraction
+        progressLabel = if (waitingBreak) {
+            "시작 전 · $timeLabel 휴식"
+        } else {
+            "남음 $timeLabel · 경과 ${formatCountdown(elapsedSeconds)} / ${formatCountdown(timer.targetSeconds)}"
+        }
+        progressFraction = if (waitingBreak) 0f else countdownClockReading(remainingSeconds, timer.targetSeconds).ringFraction
     } else {
         timeLabel = formatClockTime(elapsedSeconds)
         progressLabel = "경과 $timeLabel"
@@ -137,7 +147,7 @@ internal fun menuBarTimer(state: ClientState): MenuBarTimer {
     val canMutate = state.connection == ConnectionStatus.CONNECTED && !state.working
     val toggleLabel = when (timer.status) {
         TimerStatus.RUNNING -> "일시정지"
-        TimerStatus.PAUSED -> "계속하기"
+        TimerStatus.PAUSED -> if (waitingBreak) "휴식 시작" else "계속하기"
         TimerStatus.IDLE -> null
     }
     val timeDescription = if (timer.mode == TimerMode.COUNTDOWN) "$timeLabel 남음" else "$timeLabel 경과"
@@ -161,6 +171,14 @@ internal fun menuBarTimer(state: ClientState): MenuBarTimer {
         disconnected = false,
     )
 }
+
+internal fun TimerState.isBreakWaitingToStart(): Boolean =
+    status == TimerStatus.PAUSED &&
+        phase != TimerPhase.FOCUS &&
+        mode == TimerMode.COUNTDOWN &&
+        accumulatedMillis == 0L &&
+        runningSinceEpochMs == null &&
+        startedAtEpochMs != null
 
 internal fun renderMenuBarTimer(model: MenuBarTimer): Image {
     val layout = menuBarLayout(model)

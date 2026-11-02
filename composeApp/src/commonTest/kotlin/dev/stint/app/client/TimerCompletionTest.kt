@@ -109,6 +109,53 @@ class TimerCompletionTest {
     }
 
     @Test
+    fun `focus completion emits once when break waits for a manual start`() {
+        val tracker = TimerCompletionTracker()
+        val focus = running(targetSeconds = 5)
+        assertNull(tracker.update(state(10_000, focus)))
+        val waitingBreak = focus.copy(
+            status = TimerStatus.PAUSED,
+            phase = TimerPhase.SHORT_BREAK,
+            targetSeconds = 300,
+            accumulatedMillis = 0,
+            runningSinceEpochMs = null,
+            startedAtEpochMs = 15_000,
+        )
+        val session = FocusSession(
+            id = "timer", subjectId = "subject", startedAtEpochMs = 10_000,
+            endedAtEpochMs = 15_000, durationSeconds = 5, mode = TimerMode.COUNTDOWN,
+        )
+
+        assertEquals(
+            TimerPhase.FOCUS,
+            tracker.update(state(15_100, waitingBreak, sessions = listOf(session)))?.phase,
+        )
+        assertNull(tracker.update(state(500_000, waitingBreak, sessions = listOf(session))))
+        assertEquals(1, tracker.deliveredKeys().size)
+    }
+
+    @Test
+    fun `focus completion emits once when pomodoro flow returns directly to idle`() {
+        val tracker = TimerCompletionTracker()
+        val focus = running(targetSeconds = 5)
+        assertNull(tracker.update(state(10_000, focus)))
+        val session = FocusSession(
+            id = "timer", subjectId = "subject", startedAtEpochMs = 10_000,
+            endedAtEpochMs = 15_000, durationSeconds = 5, mode = TimerMode.COUNTDOWN,
+        )
+        val idle = focus.copy(
+            status = TimerStatus.IDLE,
+            phase = TimerPhase.FOCUS,
+            accumulatedMillis = 0,
+            runningSinceEpochMs = null,
+            startedAtEpochMs = null,
+        )
+
+        assertEquals(TimerPhase.FOCUS, tracker.update(state(15_100, idle, sessions = listOf(session)))?.phase)
+        assertNull(tracker.update(state(15_200, idle, sessions = listOf(session))))
+    }
+
+    @Test
     fun `confirmed focus transition is not lost while another mutation is working`() {
         val tracker = TimerCompletionTracker()
         val focus = running(targetSeconds = 5)

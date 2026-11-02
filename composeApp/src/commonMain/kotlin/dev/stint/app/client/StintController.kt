@@ -211,14 +211,18 @@ class StintController(
             mutate(
                 settings,
                 "/v1/subjects",
-                SaveSubjectRequest(context, subject.copy(focusSeconds = targetSeconds)),
+                SaveSubjectRequest(context, subject.copy(focusSeconds = targetSeconds), includesFlowSettings = true),
                 HttpMethod.POST,
             )
         }
     }
 
-    override fun saveSubject(subject: Subject) = launchMutation { settings, context ->
-        mutate(settings, "/v1/subjects", SaveSubjectRequest(context, subject), HttpMethod.POST)
+    override fun saveSubject(subject: Subject) {
+        val snapshot = _state.value.snapshot ?: return
+        val guard = TimerMutationGuard(snapshot.revision, snapshot.timer.id, snapshot.timer.phase)
+        launchMutation(guard) { settings, context ->
+            mutate(settings, "/v1/subjects", SaveSubjectRequest(context, subject, includesFlowSettings = true), HttpMethod.POST)
+        }
     }
 
     override fun saveMemo(sessionId: String, memo: String) = launchMutation { settings, context ->
@@ -293,7 +297,7 @@ class StintController(
                     _state.update {
                         it.copy(
                             connection = ConnectionStatus.CONNECTED,
-                            message = "다른 기기에서 상태가 바뀌어 시간 변경을 보내지 않았어요. 다시 확인해 주세요.",
+                            message = "다른 기기에서 상태가 바뀌어 변경을 보내지 않았어요. 다시 확인해 주세요.",
                         )
                     }
                     return@withLock
