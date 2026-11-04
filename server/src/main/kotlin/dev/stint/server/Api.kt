@@ -23,6 +23,7 @@ import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
+import io.ktor.server.websocket.DefaultWebSocketServerSession
 import io.ktor.server.websocket.webSocket
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
@@ -30,6 +31,8 @@ import io.ktor.websocket.close
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.collectLatest
@@ -52,6 +55,9 @@ internal class EventHub(initial: Snapshot) {
     internal val current: Snapshot
         get() = snapshots.value
 
+    internal val subscriptionCount: Int
+        get() = snapshots.subscriptionCount.value
+
     fun publish(snapshot: Snapshot) {
         snapshots.update { current ->
             if (snapshot.revision >= current.revision) snapshot else current
@@ -63,10 +69,11 @@ internal class EventHub(initial: Snapshot) {
     }
 }
 
-fun Application.stintModule(
+internal fun Application.stintModule(
     config: ServerConfig,
     database: Database = Database(config),
     clock: Clock = SystemClock,
+    eventHub: EventHub? = null,
 ) {
     val wireJson = Json {
         encodeDefaults = true
@@ -75,7 +82,7 @@ fun Application.stintModule(
     database.migrate()
     val repository = StintRepository(database, clock)
     repository.settleExpired()
-    val events = EventHub(repository.snapshot())
+    val events = eventHub ?: EventHub(repository.snapshot())
     val appLog = environment.log
 
     install(ContentNegotiation) { json(wireJson) }
@@ -176,7 +183,9 @@ fun Application.stintModule(
                     return@webSocket
                 }
                 events.publish(withContext(Dispatchers.IO) { repository.snapshot() })
-                events.collect { snapshot -> send(Frame.Text(wireJson.encodeToString(Snapshot.serializer(), snapshot))) }
+                streamEventsUntilClosed(events) { snapshot ->
+                    send(Frame.Text(wireJson.encodeToString(Snapshot.serializer(), snapshot)))
+                }
             }
         }
     }
@@ -192,6 +201,22 @@ fun Application.stintModule(
     monitor.subscribe(ApplicationStopped) {
         ticker.cancel()
         database.close()
+    }
+}
+
+/**
+ * A StateFlow collector does not observe a WebSocket transport closing by itself. Keep the sender
+ * as a child of the close watcher so every graceful close and transport failure releases its slot.
+ */
+private suspend fun DefaultWebSocketServerSession.streamEventsUntilClosed(
+    events: EventHub,
+    sendSnapshot: suspend (Snapshot) -> Unit,
+) = coroutineScope {
+    val sender = launch { events.collect(sendSnapshot) }
+    try {
+        closeReason.await()
+    } finally {
+        sender.cancelAndJoin()
     }
 }
 

@@ -27,6 +27,9 @@
 집중 타이머 id와 동일하며 DB primary key로 중복 생성을 막는다. 상태 전이,
 기록, revision, receipt는 같은 트랜잭션에서 확정한 뒤 알림을 보낸다.
 기기 presence/heartbeat는 domain revision을 올리지 않는다.
+WebSocket의 상태 구독은 연결 종료 신호와 같은 구조화된 scope에서 실행하고,
+정상 종료·통신 중단 때 구독 job을 취소한 뒤 정리를 기다린다. 연결이 끊긴
+세션이 EventHub의 StateFlow 구독 슬롯에 남지 않도록 유지한다.
 
 서버는 실행 기준 시각과 누적 집중 초를 저장한다. 자연 종료 시 정확한 종료
 시각을 기준으로 기록을 한 번만 만든다. 주제별 `pomodoroEnabled`가 꺼져 있으면
