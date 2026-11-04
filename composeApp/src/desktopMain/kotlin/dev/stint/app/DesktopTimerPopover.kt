@@ -1,6 +1,7 @@
 package dev.stint.app
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -13,6 +14,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.size
@@ -21,11 +24,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -35,6 +40,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -242,19 +250,26 @@ private fun TimerPopoverContent(
                 Column(Modifier.weight(1f)) {
                     Text(phaseLabel, color = Clay, style = MaterialTheme.typography.labelLarge)
                     if (idle && availableSubjects.isNotEmpty()) {
-                        TextButton(
-                            onClick = { choosingSubject = !choosingSubject },
-                            enabled = !state.working,
-                            contentPadding = PaddingValues(vertical = 2.dp),
-                            modifier = Modifier.fillMaxWidth().semantics {
-                                contentDescription = "주제 선택: ${subject?.name.orEmpty()}"
-                                stateDescription = if (choosingSubject) "목록 열림" else "목록 닫힘"
-                            },
-                        ) {
-                            Text(subject?.name ?: "주제를 고르세요", modifier = Modifier.weight(1f),
-                                color = Ink, style = MaterialTheme.typography.bodyMedium,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(if (choosingSubject) "⌃" else "⌄", color = Clay)
+                        Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
+                            CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 32.dp) {
+                                TextButton(
+                                    onClick = { choosingSubject = !choosingSubject },
+                                    enabled = !state.working,
+                                    shape = RoundedCornerShape(6.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                    modifier = Modifier.offset(x = (-8).dp).widthIn(max = 200.dp).height(32.dp).semantics {
+                                        contentDescription = "주제 선택: ${subject?.name.orEmpty()}"
+                                        stateDescription = if (choosingSubject) "목록 열림" else "목록 닫힘"
+                                    },
+                                ) {
+                                    Text(subject?.name ?: "주제를 고르세요",
+                                        modifier = Modifier.widthIn(max = 160.dp).clipToBounds(),
+                                        color = Ink, style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Spacer(Modifier.width(6.dp))
+                                    SubjectPickerChevron(choosingSubject)
+                                }
+                            }
                         }
                     } else {
                         Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
@@ -339,6 +354,17 @@ private fun TimerPopoverContent(
                 TextButton(onClick = { onDismiss(); onQuit() }) { Text("종료") }
             }
         }
+    }
+}
+
+@Composable
+private fun SubjectPickerChevron(expanded: Boolean) {
+    Canvas(Modifier.size(12.dp)) {
+        val outerY = size.height * if (expanded) .65f else .35f
+        val innerY = size.height * if (expanded) .35f else .65f
+        val middle = Offset(size.width * .5f, innerY)
+        drawLine(Clay, Offset(size.width * .2f, outerY), middle, 1.5.dp.toPx(), StrokeCap.Round)
+        drawLine(Clay, middle, Offset(size.width * .8f, outerY), 1.5.dp.toPx(), StrokeCap.Round)
     }
 }
 

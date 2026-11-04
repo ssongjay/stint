@@ -123,7 +123,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg)
             packageName = "Stint"
-            packageVersion = "1.9.0"
+            packageVersion = "1.9.1"
             appResourcesRootDir.set(layout.buildDirectory.dir("generated/appResources"))
             modules("java.net.http", "jdk.crypto.ec")
             macOS {
