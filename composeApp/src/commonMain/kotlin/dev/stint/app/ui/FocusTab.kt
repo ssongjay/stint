@@ -35,12 +35,14 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -80,8 +82,8 @@ internal fun FocusTab(
         ?: subjects.firstOrNull { it.id == selectedSubjectId }
     var selectedModeName by rememberSaveable { mutableStateOf(TimerMode.COUNTDOWN.name) }
     val selectedMode = TimerMode.entries.firstOrNull { it.name == selectedModeName } ?: TimerMode.COUNTDOWN
-    val connected = state.connection == ConnectionStatus.CONNECTED && !state.working
     var dialAdjusting by remember { mutableStateOf(false) }
+    val actionAvailability = timerActionAvailability(state.connection, state.working, dialAdjusting)
 
     if (subjects.isEmpty()) {
         EmptySubjects(onAddSubject)
@@ -107,7 +109,7 @@ internal fun FocusTab(
                 clockStyle = state.clockStyle,
                 onClockStyle = controller::setClockStyle,
                 clockHeight = faceHeight,
-                canMutate = connected && !dialAdjusting,
+                actionAvailability = actionAvailability,
                 dialSession = timeDialSession(state, activeSubject, selectedMode),
                 dialBusy = state.working,
                 dialFeedback = state.message,
@@ -125,7 +127,7 @@ internal fun FocusTab(
                 Spacer(Modifier.height(22.dp))
                 PomodoroControls(
                     subject = subject,
-                    enabled = connected && !dialAdjusting,
+                    enabled = actionAvailability.canMutate,
                     countdown = (if (timer.status == TimerStatus.IDLE) selectedMode else timer.mode) == TimerMode.COUNTDOWN,
                     onSave = { updated ->
                         if (controller.state.value.snapshot?.revision == snapshot?.revision) controller.saveSubject(updated)
@@ -173,8 +175,8 @@ internal fun FocusTab(
                 onTimeSettings = onTimeSettings,
                 hingeTopDp = hingeTop,
                 hingeHeightDp = foldPosture.hingeHeightDp,
-                dialAdjusting = dialAdjusting,
                 onDialAdjustingChange = { dialAdjusting = it },
+                actionAvailability = actionAvailability,
             )
 
             validBook -> Row(Modifier.fillMaxSize()) {
@@ -186,7 +188,7 @@ internal fun FocusTab(
                     nowEpochMs = nowEpochMs,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     onMemo = controller::saveMemo,
-                    canEdit = connected,
+                    canEdit = actionAvailability.canMutate,
                 )
             }
 
@@ -199,7 +201,7 @@ internal fun FocusTab(
                     nowEpochMs = nowEpochMs,
                     modifier = Modifier.weight(0.8f).fillMaxHeight(),
                     onMemo = controller::saveMemo,
-                    canEdit = connected,
+                    canEdit = actionAvailability.canMutate,
                 )
             }
 
@@ -213,7 +215,7 @@ internal fun FocusTab(
                     modifier = Modifier.fillMaxWidth(),
                     onMemo = controller::saveMemo,
                     nestedScroll = false,
-                    canEdit = connected,
+                    canEdit = actionAvailability.canMutate,
                 )
             }
         }
@@ -235,11 +237,10 @@ private fun TabletopFocus(
     onTimeSettings: () -> Unit,
     hingeTopDp: Float,
     hingeHeightDp: Float,
-    dialAdjusting: Boolean,
     onDialAdjustingChange: (Boolean) -> Unit,
+    actionAvailability: TimerActionAvailability,
 ) {
     val timer = state.snapshot?.timer ?: TimerState()
-    val canMutate = state.connection == ConnectionStatus.CONNECTED && !state.working
     val start: () -> Unit = {
         if (activeSubject != null) {
             controller.start(
@@ -302,7 +303,7 @@ private fun TabletopFocus(
                     timer = timer,
                     subject = activeSubject,
                     selectedMode = selectedMode,
-                    canMutate = canMutate && !dialAdjusting,
+                    actionAvailability = actionAvailability,
                     onStart = start,
                     onPause = controller::pause,
                     onResume = controller::resume,
@@ -317,7 +318,7 @@ private fun TabletopFocus(
                     Spacer(Modifier.height(12.dp))
                     PomodoroControls(
                         subject = subject,
-                        enabled = canMutate && !dialAdjusting,
+                        enabled = actionAvailability.canMutate,
                         countdown = (if (timer.status == TimerStatus.IDLE) selectedMode else timer.mode) == TimerMode.COUNTDOWN,
                         onSave = { updated ->
                             if (controller.state.value.snapshot?.revision == state.snapshot?.revision) controller.saveSubject(updated)
@@ -337,7 +338,7 @@ private fun TabletopFocus(
                 nowEpochMs = nowEpochMs,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 onMemo = controller::saveMemo,
-                canEdit = canMutate,
+                canEdit = actionAvailability.canMutate,
             )
         }
     }
@@ -352,7 +353,7 @@ private fun TimerWorkbench(
     clockStyle: TimerClockStyle,
     onClockStyle: (TimerClockStyle) -> Unit,
     clockHeight: Dp,
-    canMutate: Boolean,
+    actionAvailability: TimerActionAvailability,
     dialSession: TimeDialSession,
     dialBusy: Boolean,
     dialFeedback: String?,
@@ -387,7 +388,7 @@ private fun TimerWorkbench(
         timer = timer,
         subject = subject,
         selectedMode = selectedMode,
-        canMutate = canMutate,
+        actionAvailability = actionAvailability,
         onStart = onStart,
         onPause = onPause,
         onResume = onResume,
@@ -540,7 +541,7 @@ private fun TimerActions(
     timer: TimerState,
     subject: Subject?,
     selectedMode: TimerMode,
-    canMutate: Boolean,
+    actionAvailability: TimerActionAvailability,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -549,34 +550,34 @@ private fun TimerActions(
 ) {
     val status = timer.status
     val shownMode = if (status == TimerStatus.IDLE) selectedMode else timer.mode
+    val primaryLabel = primaryTimerActionLabel(timer, shownMode, actionAvailability.operationPending)
+    val primaryModifier = Modifier.height(52.dp)
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         when {
             status == TimerStatus.IDLE && timer.phase == TimerPhase.FOCUS -> {
                 Button(
                     onClick = onStart,
-                    enabled = canMutate && subject != null,
-                    modifier = Modifier.height(52.dp),
+                    enabled = actionAvailability.canMutate && subject != null,
+                    modifier = primaryModifier,
                     shape = RoundedCornerShape(8.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Clay),
-                ) { Text(if (shownMode == TimerMode.COUNTDOWN) "집중 시작" else "측정 시작") }
+                ) { StablePrimaryActionLabel(primaryLabel) }
             }
             status == TimerStatus.RUNNING -> {
-                Button(onClick = onPause, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("일시정지") }
-                OutlinedButton(onClick = onFinish, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("마치기") }
+                Button(onClick = onPause, enabled = actionAvailability.canMutate, modifier = primaryModifier, shape = RoundedCornerShape(8.dp)) { StablePrimaryActionLabel(primaryLabel) }
+                OutlinedButton(onClick = onFinish, enabled = actionAvailability.canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("마치기") }
             }
             status == TimerStatus.PAUSED -> {
-                Button(onClick = onResume, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) {
-                    Text(if (timer.phase != TimerPhase.FOCUS && timer.accumulatedMillis == 0L) "휴식 시작" else "이어서 하기")
-                }
-                OutlinedButton(onClick = onFinish, enabled = canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("마치기") }
+                Button(onClick = onResume, enabled = actionAvailability.canMutate, modifier = primaryModifier, shape = RoundedCornerShape(8.dp)) { StablePrimaryActionLabel(primaryLabel) }
+                OutlinedButton(onClick = onFinish, enabled = actionAvailability.canMutate, modifier = Modifier.height(52.dp), shape = RoundedCornerShape(8.dp)) { Text("마치기") }
             }
             else -> Unit
         }
         if (timer.phase != TimerPhase.FOCUS) {
-            TextButton(onClick = onSkipBreak, enabled = canMutate, modifier = Modifier.height(52.dp)) { Text("휴식 건너뛰기") }
+            TextButton(onClick = onSkipBreak, enabled = actionAvailability.canMutate, modifier = Modifier.height(52.dp)) { Text("휴식 건너뛰기") }
         }
     }
-    if (!canMutate) {
+    if (actionAvailability.showOfflineMessage) {
         Spacer(Modifier.height(14.dp))
         Text("오프라인에서는 시간을 계속 보여주지만 조작은 연결 후 가능해요.", color = InkMuted, style = MaterialTheme.typography.bodyMedium)
     }
@@ -584,6 +585,46 @@ private fun TimerActions(
         Spacer(Modifier.height(28.dp))
         CycleMarks(timer.completedFocusCount, subject?.longBreakEvery ?: 4)
     }
+}
+
+@Composable
+private fun StablePrimaryActionLabel(label: String) {
+    Box(contentAlignment = Alignment.Center) {
+        Text(
+            "이어서 하기",
+            Modifier.alpha(0f).clearAndSetSemantics { },
+        )
+        Text(label)
+    }
+}
+
+internal data class TimerActionAvailability(
+    val canMutate: Boolean,
+    val showOfflineMessage: Boolean,
+    val operationPending: Boolean,
+)
+
+internal fun timerActionAvailability(
+    connection: ConnectionStatus,
+    working: Boolean,
+    dialAdjusting: Boolean,
+): TimerActionAvailability = TimerActionAvailability(
+    canMutate = connection == ConnectionStatus.CONNECTED && !working && !dialAdjusting,
+    showOfflineMessage = connection != ConnectionStatus.CONNECTED,
+    operationPending = connection == ConnectionStatus.CONNECTED && working,
+)
+
+internal fun primaryTimerActionLabel(
+    timer: TimerState,
+    shownMode: TimerMode,
+    operationPending: Boolean,
+): String = when {
+    operationPending -> "저장 중…"
+    timer.status == TimerStatus.IDLE && shownMode == TimerMode.COUNTDOWN -> "집중 시작"
+    timer.status == TimerStatus.IDLE -> "측정 시작"
+    timer.status == TimerStatus.RUNNING -> "일시정지"
+    timer.phase != TimerPhase.FOCUS && timer.accumulatedMillis == 0L -> "휴식 시작"
+    else -> "이어서 하기"
 }
 
 @Composable

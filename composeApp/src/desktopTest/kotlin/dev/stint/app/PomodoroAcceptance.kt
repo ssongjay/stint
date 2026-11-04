@@ -18,8 +18,14 @@ import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerPhase
 import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Isolated visual and interaction fixture for the synchronized Pomodoro preferences.
@@ -32,13 +38,18 @@ object PomodoroAcceptance {
     @JvmStatic
     fun main(args: Array<String>) = application {
         val configuration = remember(args.toList()) { AcceptanceConfiguration.parse(args) }
-        val controller = remember { FakePomodoroController() }
+        val controller = remember(configuration) {
+            FakePomodoroController(configuration.ackDelayMillis, configuration.offline)
+        }
         val windowState = rememberWindowState(
             size = DpSize(configuration.width.dp, configuration.height.dp),
         )
 
         Window(
-            onCloseRequest = ::exitApplication,
+            onCloseRequest = {
+                controller.close()
+                exitApplication()
+            },
             state = windowState,
             title = "Stint Pomodoro QA",
         ) {
@@ -49,6 +60,8 @@ object PomodoroAcceptance {
     private data class AcceptanceConfiguration(
         val width: Int,
         val height: Int,
+        val ackDelayMillis: Long,
+        val offline: Boolean,
     ) {
         companion object {
             fun parse(args: Array<String>): AcceptanceConfiguration {
@@ -59,11 +72,16 @@ object PomodoroAcceptance {
                 }.toMap()
                 val width = values["width"]?.toIntOrNull() ?: DEFAULT_WIDTH
                 val height = values["height"]?.toIntOrNull() ?: DEFAULT_HEIGHT
+                val ackDelayMillis = values["ack-delay-ms"]?.toLongOrNull() ?: 0L
+                val offline = values["offline"]?.toBooleanStrictOrNull() ?: false
                 require(width in 360..2_400) { "width must be between 360 and 2400" }
                 require(height in 640..1_800) { "height must be between 640 and 1800" }
+                require(ackDelayMillis in 0L..10_000L) { "ack-delay-ms must be between 0 and 10000" }
                 return AcceptanceConfiguration(
                     width = width,
                     height = height,
+                    ackDelayMillis = ackDelayMillis,
+                    offline = offline,
                 )
             }
         }
@@ -73,8 +91,12 @@ object PomodoroAcceptance {
     private const val DEFAULT_HEIGHT = 880
 }
 
-private class FakePomodoroController : ClientController {
+private class FakePomodoroController(
+    private val ackDelayMillis: Long,
+    offline: Boolean,
+) : ClientController {
     private val now = System.currentTimeMillis()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val mutable = MutableStateFlow(
         ClientState(
             settings = ConnectionSettings(
@@ -100,7 +122,7 @@ private class FakePomodoroController : ClientController {
                 timer = TimerState(subjectId = SUBJECT_ID, targetSeconds = 25 * 60),
             ),
             serverNowEpochMs = now,
-            connection = ConnectionStatus.CONNECTED,
+            connection = if (offline) ConnectionStatus.OFFLINE else ConnectionStatus.CONNECTED,
         ),
     )
     override val state: StateFlow<ClientState> = mutable
@@ -113,8 +135,8 @@ private class FakePomodoroController : ClientController {
     }
 
     override fun start(subjectId: String, mode: TimerMode, focusSeconds: Int?) {
-        val startedAt = System.currentTimeMillis()
         mutate { snapshot ->
+            val startedAt = System.currentTimeMillis()
             snapshot.copy(
                 timer = TimerState(
                     id = "pomodoro-qa-timer",
@@ -164,7 +186,7 @@ private class FakePomodoroController : ClientController {
         mutable.value = mutable.value.copy(clockStyle = style)
     }
 
-    override fun close() = Unit
+    override fun close() = scope.cancel()
 
     private fun mutateTimer(transform: (TimerState) -> TimerState) = mutate { snapshot ->
         snapshot.copy(timer = transform(snapshot.timer))
@@ -172,12 +194,22 @@ private class FakePomodoroController : ClientController {
 
     private fun mutate(transform: (Snapshot) -> Snapshot) {
         val current = mutable.value
-        val snapshot = requireNotNull(current.snapshot)
-        val updated = transform(snapshot).copy(
-            serverNowEpochMs = System.currentTimeMillis(),
-            revision = snapshot.revision + 1,
-        )
-        mutable.value = current.copy(snapshot = updated, serverNowEpochMs = updated.serverNowEpochMs)
+        if (current.working || current.connection != ConnectionStatus.CONNECTED) return
+        mutable.value = current.copy(working = true)
+        scope.launch {
+            delay(ackDelayMillis)
+            val pending = mutable.value
+            val snapshot = requireNotNull(pending.snapshot)
+            val updated = transform(snapshot).copy(
+                serverNowEpochMs = System.currentTimeMillis(),
+                revision = snapshot.revision + 1,
+            )
+            mutable.value = pending.copy(
+                snapshot = updated,
+                serverNowEpochMs = updated.serverNowEpochMs,
+                working = false,
+            )
+        }
     }
 
     private companion object {
