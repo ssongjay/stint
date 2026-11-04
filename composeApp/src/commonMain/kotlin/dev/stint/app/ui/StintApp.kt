@@ -84,7 +84,13 @@ data class FoldPosture(
 )
 
 @Composable
-fun StintApp(controller: ClientController, foldPosture: FoldPosture = FoldPosture(), onTestNotification: (suspend () -> String)? = null) {
+fun StintApp(
+    controller: ClientController,
+    foldPosture: FoldPosture = FoldPosture(),
+    onTestNotification: (suspend () -> String)? = null,
+    selectedSubjectId: String? = null,
+    onSelectSubject: ((String) -> Unit)? = null,
+) {
     val state by controller.state.collectAsState()
 
     WorkbenchTheme {
@@ -99,17 +105,25 @@ fun StintApp(controller: ClientController, foldPosture: FoldPosture = FoldPostur
                     onDismissMessage = controller::dismissMessage,
                 )
             } else {
-                Workbench(controller, state, foldPosture, onTestNotification)
+                Workbench(controller, state, foldPosture, onTestNotification, selectedSubjectId, onSelectSubject)
             }
         }
     }
 }
 
 @Composable
-private fun Workbench(controller: ClientController, state: ClientState, foldPosture: FoldPosture, onTestNotification: (suspend () -> String)?) {
+private fun Workbench(
+    controller: ClientController,
+    state: ClientState,
+    foldPosture: FoldPosture,
+    onTestNotification: (suspend () -> String)?,
+    externalSelectedSubjectId: String?,
+    onSelectSubject: ((String) -> Unit)?,
+) {
     var tabName by rememberSaveable { mutableStateOf(MainTab.FOCUS.name) }
     var panelName by rememberSaveable { mutableStateOf(SidePanel.NONE.name) }
-    var selectedSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
+    var localSelectedSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
+    var recordSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var editingSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
     var tickNow by remember { mutableLongStateOf(state.serverNowEpochMs) }
 
@@ -117,13 +131,13 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
     val panel = SidePanel.entries.firstOrNull { it.name == panelName } ?: SidePanel.NONE
 
     val subjects = state.snapshot?.subjects.orEmpty().filterNot { it.archived }
-    val timerSubjectId = state.snapshot?.timer?.subjectId
-    LaunchedEffect(subjects, timerSubjectId) {
-        selectedSubjectId = when {
-            timerSubjectId != null && subjects.any { it.id == timerSubjectId } -> timerSubjectId
-            selectedSubjectId != null && subjects.any { it.id == selectedSubjectId } -> selectedSubjectId
-            else -> subjects.firstOrNull()?.id
-        }
+    val draftSubjectId = if (onSelectSubject != null) externalSelectedSubjectId else localSelectedSubjectId
+    val selectedSubjectId = state.snapshot?.let { focusSubjectChoice(it.subjects, it.timer, draftSubjectId)?.id }
+    val recordFilterSubjectId = subjects.firstOrNull { it.id == recordSubjectId }?.id
+        ?: subjects.firstOrNull { it.id == selectedSubjectId }?.id
+        ?: subjects.firstOrNull()?.id
+    val selectSubject: (String) -> Unit = { id ->
+        if (onSelectSubject != null) onSelectSubject(id) else localSelectedSubjectId = id
     }
     LaunchedEffect(state.serverNowEpochMs) {
         val base = state.serverNowEpochMs
@@ -162,7 +176,7 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
                     nowEpochMs = tickNow,
                     onSave = {
                         controller.saveSubject(it)
-                        selectedSubjectId = it.id
+                        selectSubject(it.id)
                         panelName = SidePanel.NONE.name
                     },
                     onClose = { panelName = SidePanel.NONE.name },
@@ -189,7 +203,7 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
                     state = state,
                     nowEpochMs = tickNow,
                     selectedSubjectId = selectedSubjectId,
-                    onSelectSubject = { selectedSubjectId = it },
+                    onSelectSubject = selectSubject,
                     onAddSubject = {
                         editingSubjectId = null
                         panelName = SidePanel.SUBJECT.name
@@ -207,8 +221,8 @@ private fun Workbench(controller: ClientController, state: ClientState, foldPost
                     controller = controller,
                     state = state,
                     nowEpochMs = tickNow,
-                    selectedSubjectId = selectedSubjectId,
-                    onSelectSubject = { selectedSubjectId = it },
+                    selectedSubjectId = recordFilterSubjectId,
+                    onSelectSubject = { recordSubjectId = it },
                     wide = wide,
                     foldPosture = foldPosture,
                 )

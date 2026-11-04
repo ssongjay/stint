@@ -1,6 +1,9 @@
 package dev.stint.app
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,7 +12,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -32,6 +40,11 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -42,6 +55,10 @@ import dev.stint.app.ui.Ink
 import dev.stint.app.ui.InkMuted
 import dev.stint.app.ui.Paper
 import dev.stint.app.ui.Rule
+import dev.stint.app.ui.Forest
+import dev.stint.app.ui.focusSubjectChoice
+import dev.stint.app.ui.formatDuration
+import dev.stint.app.ui.parseSubjectColor
 import dev.stint.app.ui.TimerClockVisual
 import dev.stint.app.ui.WorkbenchTheme
 import dev.stint.shared.ClientController
@@ -51,6 +68,7 @@ import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerPhase
 import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
+import dev.stint.shared.Subject
 import dev.stint.shared.countdownClockReadingMillis
 import dev.stint.shared.elapsedMillis
 import dev.stint.shared.stopwatchClockReadingMillis
@@ -63,7 +81,7 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 
 private const val POPOVER_WIDTH = 330
-private const val POPOVER_HEIGHT = 438
+private const val POPOVER_HEIGHT = 458
 private const val POPOVER_GAP = 10
 
 internal data class DesktopScreenBounds(val x: Int, val y: Int, val width: Int, val height: Int)
@@ -112,6 +130,8 @@ internal fun DesktopTimerPopover(
     onDismiss: () -> Unit,
     onOpen: () -> Unit,
     onQuit: () -> Unit,
+    selectedSubjectId: String?,
+    onSelectSubject: (String) -> Unit,
 ) {
     val location = remember(anchor) {
         timerPopoverLocation(anchor, POPOVER_WIDTH, POPOVER_HEIGHT, usableDesktopBounds())
@@ -165,7 +185,7 @@ internal fun DesktopTimerPopover(
             window.toFront()
         }
         WorkbenchTheme {
-            TimerPopoverContent(controller, onDismiss, onOpen, onQuit)
+            TimerPopoverContent(controller, onDismiss, onOpen, onQuit, selectedSubjectId, onSelectSubject)
         }
     }
 }
@@ -176,17 +196,19 @@ private fun TimerPopoverContent(
     onDismiss: () -> Unit,
     onOpen: () -> Unit,
     onQuit: () -> Unit,
+    selectedSubjectId: String?,
+    onSelectSubject: (String) -> Unit,
 ) {
     val state by controller.state.collectAsState()
     val snapshot = state.snapshot
     val timer = snapshot?.timer ?: TimerState()
     val idle = timer.status == TimerStatus.IDLE
     val subjects = snapshot?.subjects.orEmpty()
-    val subject = if (idle) {
-        subjects.firstOrNull { !it.archived }
-    } else {
-        subjects.firstOrNull { it.id == timer.subjectId }
-            ?: subjects.firstOrNull { !it.archived }
+    val subject = focusSubjectChoice(subjects, timer, selectedSubjectId)
+    val availableSubjects = subjects.filterNot { it.archived }
+    var choosingSubject by remember { mutableStateOf(false) }
+    LaunchedEffect(timer.status, state.working, availableSubjects) {
+        if (!idle || state.working || availableSubjects.isEmpty()) choosingSubject = false
     }
     val shownMode = if (idle) TimerMode.COUNTDOWN else timer.mode
     val targetSeconds = if (idle) subject?.focusSeconds ?: timer.targetSeconds else timer.targetSeconds
@@ -219,13 +241,32 @@ private fun TimerPopoverContent(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(phaseLabel, color = Clay, style = MaterialTheme.typography.labelLarge)
-                    Text(
-                        subject?.name ?: "주제를 고르세요",
-                        color = InkMuted,
-                        style = MaterialTheme.typography.bodyMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    if (idle && availableSubjects.isNotEmpty()) {
+                        TextButton(
+                            onClick = { choosingSubject = !choosingSubject },
+                            enabled = !state.working,
+                            contentPadding = PaddingValues(vertical = 2.dp),
+                            modifier = Modifier.fillMaxWidth().semantics {
+                                contentDescription = "주제 선택: ${subject?.name.orEmpty()}"
+                                stateDescription = if (choosingSubject) "목록 열림" else "목록 닫힘"
+                            },
+                        ) {
+                            Text(subject?.name ?: "주제를 고르세요", modifier = Modifier.weight(1f),
+                                color = Ink, style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(if (choosingSubject) "⌃" else "⌄", color = Clay)
+                        }
+                    } else {
+                        Box(Modifier.fillMaxWidth().heightIn(min = 48.dp), contentAlignment = Alignment.CenterStart) {
+                            Text(
+                                subject?.name ?: if (idle) "주제를 고르세요" else "알 수 없는 주제",
+                                color = InkMuted,
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                 }
                 Text(
                     when (state.connection) {
@@ -239,7 +280,15 @@ private fun TimerPopoverContent(
                 )
             }
             Spacer(Modifier.height(6.dp))
-            if (idle && subject == null) {
+            if (choosingSubject) {
+                PopoverSubjectList(availableSubjects, subject?.id) { id ->
+                    // Recheck the live controller before changing a draft selected from an older frame.
+                    if (controller.state.value.snapshot?.timer?.status == TimerStatus.IDLE && !controller.state.value.working) {
+                        onSelectSubject(id)
+                    }
+                    choosingSubject = false
+                }
+            } else if (idle && subject == null) {
                 Box(
                     Modifier.fillMaxWidth().height(240.dp),
                     contentAlignment = Alignment.Center,
@@ -268,7 +317,7 @@ private fun TimerPopoverContent(
                 when (timer.status) {
                     TimerStatus.IDLE -> Button(
                         onClick = { subject?.let { controller.start(it.id, TimerMode.COUNTDOWN) } },
-                        enabled = canMutate && subject != null,
+                        enabled = canMutate && subject != null && !choosingSubject,
                     ) { Text("집중 시작") }
                     TimerStatus.RUNNING -> Button(onClick = controller::pause, enabled = canMutate) {
                         Text("일시정지")
@@ -288,6 +337,31 @@ private fun TimerPopoverContent(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = { onDismiss(); onOpen() }) { Text("Stint 열기") }
                 TextButton(onClick = { onDismiss(); onQuit() }) { Text("종료") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PopoverSubjectList(subjects: List<Subject>, selectedId: String?, onSelect: (String) -> Unit) {
+    Column(Modifier.fillMaxWidth().height(240.dp).verticalScroll(rememberScrollState())) {
+        Text("주제 선택", color = Clay, style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier.padding(bottom = 6.dp))
+        subjects.forEach { subject ->
+            TextButton(
+                onClick = { onSelect(subject.id) },
+                modifier = Modifier.fillMaxWidth().semantics { selected = subject.id == selectedId },
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 8.dp),
+            ) {
+                Box(Modifier.size(8.dp).background(parseSubjectColor(subject.colorHex), CircleShape))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(subject.name, color = Ink, style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(formatDuration(subject.focusSeconds), color = InkMuted,
+                        style = MaterialTheme.typography.labelSmall)
+                }
+                if (subject.id == selectedId) Text("✓", color = Forest, modifier = Modifier.clearAndSetSemantics { })
             }
         }
     }

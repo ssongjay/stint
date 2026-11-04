@@ -1,6 +1,10 @@
 package dev.stint.app
 
 import androidx.compose.ui.window.application
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import dev.stint.shared.ClientController
 import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionSettings
@@ -21,26 +25,33 @@ import kotlinx.coroutines.flow.StateFlow
 object TimerPopoverAcceptance {
     @JvmStatic
     fun main(args: Array<String>) = application {
-        val controller = FakePopoverController()
+        val controller = remember { FakePopoverController(args.contains("--active")) }
+        var selectedSubjectId by remember { mutableStateOf<String?>("qa-read") }
         DesktopTimerPopover(
             controller = controller,
             anchor = Point(600, 60),
             onDismiss = ::exitApplication,
             onOpen = {},
             onQuit = ::exitApplication,
+            selectedSubjectId = selectedSubjectId,
+            onSelectSubject = { selectedSubjectId = it },
         )
     }
 }
 
-private class FakePopoverController : ClientController {
+private class FakePopoverController(active: Boolean) : ClientController {
     private val subject = Subject("qa-subject", "개발 공부", focusSeconds = 900)
+    private val subjects = listOf(subject, Subject("qa-read", "읽기", focusSeconds = 1_500),
+        Subject("qa-project", "아주 긴 이름의 프로젝트를 차분하게 진행하기", focusSeconds = 2_700),
+        Subject("qa-archived", "보관한 주제", archived = true))
     private val now = System.currentTimeMillis()
-    private val mutable = MutableStateFlow(clientState(pausedTimer()))
+    private val mutable = MutableStateFlow(clientState(if (active) pausedTimer() else TimerState(subjectId = subject.id)))
     override val state: StateFlow<ClientState> = mutable
 
     override fun start(subjectId: String, mode: TimerMode, focusSeconds: Int?) = update(
         TimerState("qa", subjectId, TimerStatus.RUNNING, TimerPhase.FOCUS, mode,
-            focusSeconds ?: subject.focusSeconds, runningSinceEpochMs = now),
+            focusSeconds ?: subjects.first { it.id == subjectId }.focusSeconds,
+            runningSinceEpochMs = now, startedAtEpochMs = now),
     )
     override fun pause() = update(mutable.value.snapshot!!.timer.copy(
         status = TimerStatus.PAUSED, runningSinceEpochMs = null,
@@ -71,7 +82,7 @@ private class FakePopoverController : ClientController {
     }
     private fun clientState(timer: TimerState) = ClientState(
         settings = ConnectionSettings(deviceName = "Popover QA"),
-        snapshot = Snapshot(now, 1, listOf(subject), timer, emptyList<FocusSession>()),
+        snapshot = Snapshot(now, 1, subjects, timer, emptyList<FocusSession>()),
         serverNowEpochMs = now,
         connection = ConnectionStatus.CONNECTED,
     )

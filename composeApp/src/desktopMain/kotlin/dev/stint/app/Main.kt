@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
@@ -13,6 +14,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import dev.stint.app.client.StintController
 import dev.stint.app.ui.StintApp
+import dev.stint.shared.TimerStatus
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
@@ -47,6 +49,10 @@ private fun stintApplication() = application {
     val completionNotifications = remember { DesktopCompletionNotifications() }
     var windowVisible by remember { mutableStateOf(true) }
     var timerPopoverAnchor by remember { mutableStateOf<Point?>(null) }
+    var selectedSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
+    val selectSubject: (String) -> Unit = { id ->
+        if (controller.state.value.snapshot?.timer?.status == TimerStatus.IDLE) selectedSubjectId = id
+    }
     val windowState = rememberWindowState(size = DpSize(1100.dp, 780.dp))
     val menuBarAvailable = DesktopMenuBar(
         controller = controller,
@@ -84,6 +90,8 @@ private fun stintApplication() = application {
                 runBlocking { completionNotifications.close() }
                 exitApplication()
             },
+            selectedSubjectId = selectedSubjectId,
+            onSelectSubject = selectSubject,
         )
     }
 
@@ -99,6 +107,8 @@ private fun stintApplication() = application {
         StintApp(
             controller = controller,
             onTestNotification = completionNotifications::testNotification,
+            selectedSubjectId = selectedSubjectId,
+            onSelectSubject = selectSubject,
         )
     }
 }
