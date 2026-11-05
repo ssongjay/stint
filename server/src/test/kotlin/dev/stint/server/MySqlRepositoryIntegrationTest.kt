@@ -2,6 +2,7 @@ package dev.stint.server
 
 import dev.stint.shared.MutationContext
 import dev.stint.shared.SaveSubjectRequest
+import dev.stint.shared.SaveMemoRequest
 import dev.stint.shared.TimerAction
 import dev.stint.shared.TimerCommand
 import dev.stint.shared.TimerPhase
@@ -36,7 +37,7 @@ class MySqlRepositoryIntegrationTest {
         database.connection().use { connection ->
             connection.createStatement().use { statement ->
                 statement.execute("SET FOREIGN_KEY_CHECKS=0")
-                listOf("processed_commands", "focus_sessions", "devices", "timer_state", "subjects", "app_state")
+                listOf("processed_commands", "recent_memos", "focus_sessions", "devices", "timer_state", "subjects", "app_state")
                     .forEach { statement.execute("TRUNCATE TABLE $it") }
                 statement.execute("SET FOREIGN_KEY_CHECKS=1")
             }
@@ -88,6 +89,80 @@ class MySqlRepositoryIntegrationTest {
         assertFalse(second.changed)
         assertEquals(first.snapshot.revision, second.snapshot.revision)
         assertEquals(1, repository.snapshot().sessions.size)
+    }
+
+    @Test
+    fun `recent memos follow actual writes and a duplicate moves to the front once`() {
+        val sessionId = completedSession("memo-order")
+        var current = repository.snapshot()
+        current = saveMemo(sessionId, "첫 회고", "memo-first", current.revision)
+        clock.value.incrementAndGet()
+        current = saveMemo(sessionId, "둘째 회고", "memo-second", current.revision)
+        clock.value.incrementAndGet()
+        val repeated = saveMemo(sessionId, "첫 회고", "memo-first-again", current.revision)
+
+        assertEquals(listOf("첫 회고", "둘째 회고"), repeated.recentMemos)
+        val replay = repository.saveMemo(
+            sessionId,
+            SaveMemoRequest(context("memo-first-again", "mac", repeated.revision), "둘째 회고"),
+        )
+        assertFalse(replay.changed)
+        assertEquals(repeated.recentMemos, replay.snapshot.recentMemos)
+        assertEquals(repeated.revision, replay.snapshot.revision)
+    }
+
+    @Test
+    fun `recent memo history keeps five unique writes and ignores a blank clear`() {
+        val sessionId = completedSession("memo-cap")
+        var current = repository.snapshot()
+        (1..6).forEach { index ->
+            clock.value.incrementAndGet()
+            current = saveMemo(sessionId, " 회고 $index ", "memo-$index", current.revision)
+        }
+        assertEquals(listOf("회고 6", "회고 5", "회고 4", "회고 3", "회고 2"), current.recentMemos)
+
+        val cleared = saveMemo(sessionId, "   ", "memo-clear", current.revision)
+        assertEquals(current.recentMemos, cleared.recentMemos)
+        assertEquals("", cleared.sessions.first { it.id == sessionId }.memo)
+    }
+
+    @Test
+    fun `migration imports five distinct legacy memos once without overwriting new history`() {
+        database.connection().use { connection ->
+            connection.prepareStatement(
+                """
+                INSERT INTO focus_sessions(
+                  id, subject_id, started_at_ms, ended_at_ms, duration_seconds, mode, memo, device_name, created_at_ms
+                ) VALUES (?, 'study', ?, ?, 60, 'COUNTDOWN', ?, 'Legacy', ?)
+                """.trimIndent(),
+            ).use { statement ->
+                listOf(
+                    Triple("legacy-1", 1_000L, "첫 기록"),
+                    Triple("legacy-2", 2_000L, "중복 기록"),
+                    Triple("legacy-3", 3_000L, "중복 기록"),
+                    Triple("legacy-4", 4_000L, "넷"),
+                    Triple("legacy-5", 5_000L, "다섯"),
+                    Triple("legacy-6", 6_000L, "여섯"),
+                    Triple("legacy-7", 7_000L, "일곱"),
+                ).forEach { (id, endedAt, memo) ->
+                    statement.setString(1, id)
+                    statement.setLong(2, endedAt - 60_000)
+                    statement.setLong(3, endedAt)
+                    statement.setString(4, memo)
+                    statement.setLong(5, endedAt)
+                    statement.addBatch()
+                }
+                statement.executeBatch()
+            }
+        }
+        database.migrate()
+        assertEquals(listOf("일곱", "여섯", "다섯", "넷", "중복 기록"), repository.snapshot().recentMemos)
+
+        val current = repository.snapshot()
+        val saved = saveMemo("legacy-1", "새 회고", "new-after-migration", current.revision)
+        database.migrate()
+        assertEquals(saved.recentMemos, repository.snapshot().recentMemos)
+        assertEquals("새 회고", repository.snapshot().recentMemos.first())
     }
 
     @Test
@@ -331,6 +406,17 @@ class MySqlRepositoryIntegrationTest {
             ),
         ).snapshot
     }
+
+    private fun completedSession(prefix: String): String {
+        val started = repository.execute(start("$prefix-start", "mac", repository.snapshot().revision)).snapshot
+        clock.value.addAndGet(2_000)
+        return repository.execute(
+            TimerCommand(context("$prefix-finish", "mac", started.revision), TimerAction.FINISH),
+        ).snapshot.sessions.first().id
+    }
+
+    private fun saveMemo(sessionId: String, memo: String, command: String, revision: Long) =
+        repository.saveMemo(sessionId, SaveMemoRequest(context(command, "mac", revision), memo)).snapshot
 
     private fun context(command: String, device: String, revision: Long) = MutationContext(
         commandId = command,

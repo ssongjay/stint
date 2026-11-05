@@ -61,7 +61,7 @@ class StintRepository(
         }
     }
 
-    fun execute(command: TimerCommand): MutationResult = mutate(command.context) { connection, now ->
+    fun execute(command: TimerCommand): MutationResult = mutate(command.context) { connection, now, _ ->
         val timer = readTimer(connection, forUpdate = true)
         val subject = timer.subjectId?.let { readSubject(connection, it) }
         val next = when (command.action) {
@@ -125,7 +125,7 @@ class StintRepository(
         writeTimer(connection, next)
     }
 
-    fun saveSubject(request: SaveSubjectRequest): MutationResult = mutate(request.context) { connection, now ->
+    fun saveSubject(request: SaveSubjectRequest): MutationResult = mutate(request.context) { connection, now, _ ->
         validateSubject(request.subject)
         connection.prepareStatement(
             """
@@ -158,15 +158,17 @@ class StintRepository(
         }
     }
 
-    fun saveMemo(sessionId: String, request: SaveMemoRequest): MutationResult = mutate(request.context) { connection, _ ->
+    fun saveMemo(sessionId: String, request: SaveMemoRequest): MutationResult = mutate(request.context) { connection, now, nextRevision ->
         if (sessionId.isBlank() || sessionId.length > 64) throw ValidationException("Invalid session id")
         if (request.memo.length > 4_000) throw ValidationException("Memo must be at most 4000 characters")
+        val normalizedMemo = request.memo.trim()
         val updated = connection.prepareStatement("UPDATE focus_sessions SET memo = ? WHERE id = ?").use { statement ->
-            statement.setString(1, request.memo.trim())
+            statement.setString(1, normalizedMemo)
             statement.setString(2, sessionId)
             statement.executeUpdate()
         }
-        if (updated == 0) throw NotFoundException("Session was not found")
+        if (updated == 0 && !sessionExists(connection, sessionId)) throw NotFoundException("Session was not found")
+        if (normalizedMemo.isNotEmpty()) rememberMemo(connection, normalizedMemo, nextRevision, now)
     }
 
     fun settleExpired(): MutationResult? = database.connection().use { connection ->
@@ -189,7 +191,7 @@ class StintRepository(
         }
     }
 
-    private fun mutate(context: MutationContext, change: (Connection, Long) -> Unit): MutationResult {
+    private fun mutate(context: MutationContext, change: (Connection, Long, Long) -> Unit): MutationResult {
         validateContext(context)
         return database.connection().use { connection ->
             connection.autoCommit = false
@@ -209,7 +211,8 @@ class StintRepository(
                     if (settlement == null) connection.rollback() else connection.commit()
                     throw RevisionConflictException(latest, stateChanged = settlement != null)
                 }
-                change(connection, now)
+                val nextRevision = effectiveRevision + 1
+                change(connection, now, nextRevision)
                 touchDevice(connection, context.deviceId, context.deviceName, now)
                 connection.prepareStatement(
                     "INSERT INTO processed_commands(command_id, processed_at_ms) VALUES (?, ?)",
@@ -218,7 +221,7 @@ class StintRepository(
                     statement.setLong(2, now)
                     statement.executeUpdate()
                 }
-                setRevision(connection, effectiveRevision + 1)
+                setRevision(connection, nextRevision)
                 val result = snapshot(connection, now)
                 connection.commit()
                 MutationResult(result, changed = true)
@@ -252,7 +255,57 @@ class StintRepository(
         timer = readTimer(connection),
         sessions = readSessions(connection),
         devices = readDevices(connection, now),
+        recentMemos = readRecentMemos(connection),
     )
+
+    private fun readRecentMemos(connection: Connection): List<String> = connection.createStatement().use { statement ->
+        statement.executeQuery(
+            """
+            SELECT memo FROM recent_memos
+            ORDER BY last_used_revision DESC, last_used_at_ms DESC, memo_hash DESC
+            LIMIT 5
+            """.trimIndent(),
+        ).use { result -> buildList { while (result.next()) add(result.getString("memo")) } }
+    }
+
+    private fun rememberMemo(connection: Connection, memo: String, revision: Long, now: Long) {
+        connection.prepareStatement(
+            """
+            INSERT INTO recent_memos(memo_hash, memo, last_used_revision, last_used_at_ms)
+            VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              memo=VALUES(memo), last_used_revision=VALUES(last_used_revision),
+              last_used_at_ms=VALUES(last_used_at_ms)
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, memoHash(memo))
+            statement.setString(2, memo)
+            statement.setLong(3, revision)
+            statement.setLong(4, now)
+            statement.executeUpdate()
+        }
+        connection.createStatement().use { statement ->
+            statement.executeUpdate(
+                """
+                DELETE FROM recent_memos
+                WHERE memo_hash NOT IN (
+                  SELECT memo_hash FROM (
+                    SELECT memo_hash FROM recent_memos
+                    ORDER BY last_used_revision DESC, last_used_at_ms DESC, memo_hash DESC
+                    LIMIT 5
+                  ) AS kept_memos
+                )
+                """.trimIndent(),
+            )
+        }
+    }
+
+    private fun sessionExists(connection: Connection, sessionId: String): Boolean = connection.prepareStatement(
+        "SELECT 1 FROM focus_sessions WHERE id = ?",
+    ).use { statement ->
+        statement.setString(1, sessionId)
+        statement.executeQuery().use { it.next() }
+    }
 
     private fun readSubjects(connection: Connection): List<Subject> = connection.createStatement().use { statement ->
         statement.executeQuery(
@@ -461,4 +514,5 @@ class StintRepository(
     private fun java.sql.PreparedStatement.setNullableLong(index: Int, value: Long?) {
         if (value == null) setNull(index, java.sql.Types.BIGINT) else setLong(index, value)
     }
+
 }

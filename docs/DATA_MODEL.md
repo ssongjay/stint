@@ -11,6 +11,7 @@ server/src/main/kotlin/dev/stint/server/Database.kt다.
 | focus_sessions | 완료한 집중 기록과 회고. PK는 원본 집중 timer id |
 | processed_commands | 이미 적용한 command id |
 | devices | 기기 이름과 최근 연결 시각 |
+| recent_memos | 최근 저장 회고의 SHA-256·본문·사용 revision. 중복 없이 최대 5개 |
 
 ## 변경 처리
 
@@ -21,6 +22,12 @@ state 행을 잠근 뒤 receipt를 먼저 확인한다. 신규 명령일 때만 
 focus 타이머가 만료되면 정확한 deadline으로 기록을 한 번 만든다. 휴식은 집중
 통계에 넣지 않는다. 수동 종료는 실제 집중 초만 기록하며 1초 미만은 만들지 않는다.
 동일 timer id의 기록은 PK에서도 중복되지 않는다. 타이머는 매초 저장하지 않는다.
+
+회고를 저장할 때 최근 문구 이력도 같은 트랜잭션에서 갱신한다. 앞뒤 공백을
+제거한 본문의 UTF-8 SHA-256으로 중복을 구분하고 마지막 저장 revision 순서로
+최근 5개를 유지한다. 오래된 집중 기록을 수정해도 실제 저장 순서가 반영된다.
+빈 회고는 추천에 추가하지 않으며 명령 재전송은 이력 순서를 다시 바꾸지 않는다.
+기존 DB는 최초 이관 때 기록 종료 시각순으로 최대 5개를 가져온다.
 
 주제의 `pomodoroEnabled`와 `autoStartBreak`는 서버에 저장되는 동기화 설정이다.
 둘 다 기본값은 true이며 기존 DB에는 누락된 컬럼만 추가한다. 새 클라이언트는

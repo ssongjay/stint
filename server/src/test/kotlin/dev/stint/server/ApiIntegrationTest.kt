@@ -113,7 +113,7 @@ class ApiIntegrationTest {
         database.connection().use { connection ->
             connection.createStatement().use { statement ->
                 statement.execute("SET FOREIGN_KEY_CHECKS=0")
-                listOf("processed_commands", "focus_sessions", "devices", "timer_state", "subjects", "app_state")
+                listOf("processed_commands", "recent_memos", "focus_sessions", "devices", "timer_state", "subjects", "app_state")
                     .forEach { statement.execute("TRUNCATE TABLE $it") }
                 statement.execute("SET FOREIGN_KEY_CHECKS=1")
             }

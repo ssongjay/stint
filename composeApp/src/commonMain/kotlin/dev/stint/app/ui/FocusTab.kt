@@ -189,6 +189,7 @@ internal fun FocusTab(
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                     onMemo = controller::saveMemo,
                     canEdit = actionAvailability.canMutate,
+                    recentMemos = recentMemoSuggestions(snapshot),
                 )
             }
 
@@ -202,6 +203,7 @@ internal fun FocusTab(
                     modifier = Modifier.weight(0.8f).fillMaxHeight(),
                     onMemo = controller::saveMemo,
                     canEdit = actionAvailability.canMutate,
+                    recentMemos = recentMemoSuggestions(snapshot),
                 )
             }
 
@@ -216,6 +218,7 @@ internal fun FocusTab(
                     onMemo = controller::saveMemo,
                     nestedScroll = false,
                     canEdit = actionAvailability.canMutate,
+                    recentMemos = recentMemoSuggestions(snapshot),
                 )
             }
         }
@@ -339,6 +342,7 @@ private fun TabletopFocus(
                 modifier = Modifier.weight(1f).fillMaxHeight(),
                 onMemo = controller::saveMemo,
                 canEdit = actionAvailability.canMutate,
+                recentMemos = recentMemoSuggestions(state.snapshot),
             )
         }
     }
@@ -694,6 +698,7 @@ internal fun TodayLedger(
     onMemo: (String, String) -> Unit,
     nestedScroll: Boolean = true,
     canEdit: Boolean = true,
+    recentMemos: List<String> = emptyList(),
 ) {
     val today = localDate(nowEpochMs)
     val todaySessions = sessions.filter { it.localDay() == today }.sortedByDescending { it.startedAtEpochMs }
@@ -717,7 +722,7 @@ internal fun TodayLedger(
             Text("첫 집중을 마치면 시간순으로 이곳에 쌓여요.", color = InkMuted, style = MaterialTheme.typography.bodyMedium)
         } else {
             todaySessions.forEach { session ->
-                LedgerRow(session, subjects.firstOrNull { it.id == session.subjectId }, nowEpochMs, onMemo, canEdit)
+                LedgerRow(session, subjects.firstOrNull { it.id == session.subjectId }, nowEpochMs, onMemo, canEdit, recentMemos)
                 ThinRule()
             }
         }
@@ -725,9 +730,8 @@ internal fun TodayLedger(
 }
 
 @Composable
-internal fun LedgerRow(session: FocusSession, subject: Subject?, nowEpochMs: Long, onMemo: (String, String) -> Unit, canEdit: Boolean) {
+internal fun LedgerRow(session: FocusSession, subject: Subject?, nowEpochMs: Long, onMemo: (String, String) -> Unit, canEdit: Boolean, recentMemos: List<String>) {
     var editing by rememberSaveable(session.id) { mutableStateOf(false) }
-    var memo by rememberSaveable(session.id, session.memo) { mutableStateOf(session.memo) }
     Column(Modifier.fillMaxWidth().padding(vertical = 18.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(formatLocalTime(session.startedAtEpochMs), style = MaterialTheme.typography.labelMedium, color = InkMuted)
@@ -740,17 +744,14 @@ internal fun LedgerRow(session: FocusSession, subject: Subject?, nowEpochMs: Lon
         }
         Spacer(Modifier.height(6.dp))
         if (editing) {
-            androidx.compose.material3.OutlinedTextField(
-                value = memo,
-                onValueChange = { if (it.length <= 4000) memo = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("회고") },
-                minLines = 2,
+            MemoEditor(
+                sessionId = session.id,
+                initialMemo = session.memo,
+                recentMemos = recentMemos,
+                enabled = canEdit,
+                onSave = { onMemo(session.id, it); editing = false },
+                onCancel = { editing = false },
             )
-            Row {
-                TextButton(onClick = { onMemo(session.id, memo.trim()); editing = false }) { Text("저장") }
-                TextButton(onClick = { memo = session.memo; editing = false }) { Text("취소") }
-            }
         } else {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

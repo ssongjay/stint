@@ -71,6 +71,7 @@ data class Snapshot(
     val timer: TimerState = TimerState(),
     val sessions: List<FocusSession> = emptyList(),
     val devices: List<DeviceInfo> = emptyList(),
+    val recentMemos: List<String> = emptyList(),
 )
 
 @Serializable

@@ -33,6 +33,7 @@ class Database(private val config: ServerConfig) : AutoCloseable {
                 }
                 ensureSubjectFlowColumns(connection)
                 seed(connection)
+                seedRecentMemos(connection)
                 connection.commit()
             } catch (error: Throwable) {
                 connection.rollback()
@@ -107,6 +108,47 @@ class Database(private val config: ServerConfig) : AutoCloseable {
         }
     }
 
+    /** Import at most five legacy memos once; subsequent migrations preserve write-order history. */
+    private fun seedRecentMemos(connection: Connection) {
+        val hasHistory = connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT 1 FROM recent_memos LIMIT 1").use { it.next() }
+        }
+        if (hasHistory) return
+
+        val recent = linkedMapOf<String, Long>()
+        connection.createStatement().use { statement ->
+            statement.executeQuery(
+                """
+                SELECT MAX(TRIM(memo)) AS memo, MAX(ended_at_ms) AS last_used_at_ms
+                FROM focus_sessions
+                WHERE CHAR_LENGTH(TRIM(memo)) > 0
+                GROUP BY SHA2(CONVERT(TRIM(memo) USING utf8mb4), 256)
+                ORDER BY last_used_at_ms DESC, memo DESC
+                LIMIT 5
+                """.trimIndent(),
+            ).use { result ->
+                while (result.next()) {
+                    val memo = result.getString("memo")
+                    recent[memo] = result.getLong("last_used_at_ms")
+                }
+            }
+        }
+        connection.prepareStatement(
+            """
+            INSERT IGNORE INTO recent_memos(memo_hash, memo, last_used_revision, last_used_at_ms)
+            VALUES (?, ?, 0, ?)
+            """.trimIndent(),
+        ).use { statement ->
+            recent.forEach { (memo, lastUsedAt) ->
+                statement.setString(1, memoHash(memo))
+                statement.setString(2, memo)
+                statement.setLong(3, lastUsedAt)
+                statement.addBatch()
+            }
+            statement.executeBatch()
+        }
+    }
+
     private val schemaStatements = listOf(
         """
         CREATE TABLE IF NOT EXISTS app_state (
@@ -174,6 +216,15 @@ class Database(private val config: ServerConfig) : AutoCloseable {
           id VARCHAR(128) PRIMARY KEY,
           name VARCHAR(128) NOT NULL,
           last_seen_at_ms BIGINT NOT NULL
+        ) ENGINE=InnoDB
+        """.trimIndent(),
+        """
+        CREATE TABLE IF NOT EXISTS recent_memos (
+          memo_hash CHAR(64) PRIMARY KEY,
+          memo TEXT NOT NULL,
+          last_used_revision BIGINT NOT NULL,
+          last_used_at_ms BIGINT NOT NULL,
+          INDEX idx_recent_memos_order(last_used_revision, last_used_at_ms)
         ) ENGINE=InnoDB
         """.trimIndent(),
     )

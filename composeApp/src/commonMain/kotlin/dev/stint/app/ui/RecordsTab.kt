@@ -128,6 +128,7 @@ internal fun RecordsTab(
             scrollable = scrollable,
             canEdit = connected,
             onMemo = controller::saveMemo,
+            recentMemos = recentMemoSuggestions(snapshot),
         )
     }
 
@@ -311,6 +312,7 @@ private fun RecordLedger(
     scrollable: Boolean,
     canEdit: Boolean,
     onMemo: (String, String) -> Unit,
+    recentMemos: List<String>,
 ) {
     Column(
         modifier
@@ -335,6 +337,7 @@ private fun RecordLedger(
                     nowEpochMs = nowEpochMs,
                     onMemo = onMemo,
                     canEdit = canEdit,
+                    recentMemos = recentMemos,
                 )
                 ThinRule()
             }
