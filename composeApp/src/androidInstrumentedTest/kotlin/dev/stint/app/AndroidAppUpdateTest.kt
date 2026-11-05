@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -128,6 +129,35 @@ class AndroidAppUpdateTest {
             AndroidUpdateState.Idle -> throw AssertionError("Update check did not reach a terminal state")
         }
         writePrivateWindowScreenshot("updates-current.png")
+    }
+
+    @Test
+    fun productionSettingsExposeThePublishedVersionCheck() {
+        val saved = AndroidLocalStore(context).loadSettings()
+        assumeTrue("A preconfigured Stint connection is required for the settings entry check",
+            saved.baseUrl.isNotBlank() && saved.token.isNotBlank())
+        val launched = ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
+        launched.moveToState(Lifecycle.State.RESUMED)
+        awaitOwnActivityWindow()
+        val deadline = SystemClock.elapsedRealtime() + 15_000L
+        var badge: String? = null
+        while (badge == null && SystemClock.elapsedRealtime() < deadline) {
+            badge = ownAccessibilityTree().mapNotNull { it.text?.toString() }
+                .firstOrNull { it == "연결" || it.endsWith("동기화됨") }
+            if (badge == null) SystemClock.sleep(100)
+        }
+        clickExactOwnAppText(checkNotNull(badge) { "The Stint settings badge was unavailable" })
+        assertOwnAppText("앱 업데이트")
+        assertOwnAppText("Stint ${BuildConfig.VERSION_NAME}")
+        val updater = AtomicReference<AndroidAppUpdater>()
+        launched.onActivity { updater.set(ViewModelProvider(it)[StintViewModel::class.java].updater) }
+        clickExactOwnAppText("업데이트 확인")
+        when (val state = awaitTerminalState(updater.get())) {
+            AndroidUpdateState.UpToDate -> assertOwnAppText("현재 최신 버전을 사용하고 있어요.")
+            is AndroidUpdateState.Available -> assertOwnAppText("APK 받기")
+            else -> throw AssertionError("Production settings did not resolve the published release: $state")
+        }
+        writePrivateWindowScreenshot("updates-settings.png")
     }
 
     private fun launchFixture(
