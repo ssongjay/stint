@@ -100,15 +100,18 @@ android {
         applicationId = "dev.stint.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.9.0"
+        versionCode = 14
+        versionName = "1.10.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("debug") {
         manifest.srcFile("src/androidDebug/AndroidManifest.xml")
         res.srcDir("src/androidDebug/res")
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

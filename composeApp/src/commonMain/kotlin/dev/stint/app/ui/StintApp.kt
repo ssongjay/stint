@@ -90,6 +90,7 @@ fun StintApp(
     onTestNotification: (suspend () -> String)? = null,
     selectedSubjectId: String? = null,
     onSelectSubject: ((String) -> Unit)? = null,
+    appSettingsContent: (@Composable () -> Unit)? = null,
 ) {
     val state by controller.state.collectAsState()
 
@@ -105,7 +106,7 @@ fun StintApp(
                     onDismissMessage = controller::dismissMessage,
                 )
             } else {
-                Workbench(controller, state, foldPosture, onTestNotification, selectedSubjectId, onSelectSubject)
+                Workbench(controller, state, foldPosture, onTestNotification, selectedSubjectId, onSelectSubject, appSettingsContent)
             }
         }
     }
@@ -119,6 +120,7 @@ private fun Workbench(
     onTestNotification: (suspend () -> String)?,
     externalSelectedSubjectId: String?,
     onSelectSubject: ((String) -> Unit)?,
+    appSettingsContent: (@Composable () -> Unit)?,
 ) {
     var tabName by rememberSaveable { mutableStateOf(MainTab.FOCUS.name) }
     var panelName by rememberSaveable { mutableStateOf(SidePanel.NONE.name) }
@@ -169,6 +171,7 @@ private fun Workbench(
                     onSave = controller::configure,
                     onTestNotification = onTestNotification,
                     onClose = { panelName = SidePanel.NONE.name },
+                    appSettingsContent = appSettingsContent,
                 )
 
                 panel == SidePanel.SUBJECT -> SubjectEditor(
@@ -423,7 +426,13 @@ private fun ConnectionSetup(
 
 @Composable
 @Suppress("DEPRECATION")
-private fun ConnectionSettingsPanel(state: ClientState, onSave: (String, String) -> Unit, onClose: () -> Unit, onTestNotification: (suspend () -> String)?) {
+private fun ConnectionSettingsPanel(
+    state: ClientState,
+    onSave: (String, String) -> Unit,
+    onClose: () -> Unit,
+    onTestNotification: (suspend () -> String)?,
+    appSettingsContent: (@Composable () -> Unit)?,
+) {
     val scope = rememberCoroutineScope()
     var notificationMessage by remember { mutableStateOf<String?>(null) }
     var testingNotification by remember { mutableStateOf(false) }
@@ -442,8 +451,16 @@ private fun ConnectionSettingsPanel(state: ClientState, onSave: (String, String)
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(Modifier.fillMaxWidth().widthIn(max = 620.dp)) {
-            SectionEyebrow("연결")
-            Text("기기와 서버", style = MaterialTheme.typography.headlineMedium)
+            SectionEyebrow(if (appSettingsContent != null) "STINT" else "연결")
+            Text(if (appSettingsContent != null) "설정" else "기기와 서버", style = MaterialTheme.typography.headlineMedium)
+            if (appSettingsContent != null) {
+                Spacer(Modifier.height(22.dp))
+                appSettingsContent()
+                Spacer(Modifier.height(28.dp))
+                ThinRule()
+                Spacer(Modifier.height(22.dp))
+                Text("서버 연결", style = MaterialTheme.typography.titleMedium)
+            }
             Spacer(Modifier.height(10.dp))
             Text("서버를 바꾸면 새 스냅샷을 받아와요. 진행 중인 조작은 먼저 끝내는 편이 안전해요.", color = InkMuted)
             Spacer(Modifier.height(28.dp))

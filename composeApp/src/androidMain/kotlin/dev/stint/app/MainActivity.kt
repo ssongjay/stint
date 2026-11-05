@@ -23,6 +23,8 @@ import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import dev.stint.app.ui.FoldPosture
 import dev.stint.app.ui.StintApp
+import dev.stint.app.updates.AndroidAppUpdater
+import dev.stint.app.updates.AndroidUpdateSection
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -57,7 +59,9 @@ class MainActivity : ComponentActivity() {
                         .toFoldPosture(resources.displayMetrics.density)
                 }
             }
-            StintApp(controller, foldPosture, onTestNotification = {
+            StintApp(controller, foldPosture, appSettingsContent = {
+                AndroidUpdateSection(viewModel.updater, BuildConfig.VERSION_NAME)
+            }, onTestNotification = {
                 if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                     "시스템 설정에서 Stint 알림을 허용해 주세요."
                 } else {
@@ -99,6 +103,7 @@ class MainActivity : ComponentActivity() {
 
 class StintViewModel(application: Application) : AndroidViewModel(application) {
     val controller get() = (getApplication<Application>() as StintApplication).controller
+    internal val updater = AndroidAppUpdater(BuildConfig.VERSION_CODE.toLong(), BuildConfig.VERSION_NAME)
 }
 
 internal data class FoldFeatureGeometry(
