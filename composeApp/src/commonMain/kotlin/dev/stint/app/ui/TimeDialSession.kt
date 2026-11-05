@@ -11,6 +11,7 @@ import dev.stint.shared.TimerStatus
 
 internal data class TimeDialSession(
     val interactionKey: String,
+    val activationContextKey: String,
     val valueSeconds: Int,
     val minimumSeconds: Int,
     val maximumSeconds: Int,
@@ -36,6 +37,15 @@ internal fun timeDialSession(state: ClientState, subject: Subject?, selectedMode
     return TimeDialSession(
         interactionKey = listOf(state.snapshot?.revision, subject?.id, timer.id, timer.status,
             timer.phase, mode, target).joinToString("|"),
+        activationContextKey = listOf(
+            state.settings.baseUrl,
+            state.settings.token.hashCode(), // UI lifetime marker only; never an authorization decision.
+            subject?.id,
+            timer.id,
+            timer.status,
+            timer.phase,
+            mode,
+        ).joinToString("|"),
         valueSeconds = (target - offset).coerceAtLeast(0),
         minimumSeconds = minimum,
         maximumSeconds = maximumRemaining,

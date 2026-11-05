@@ -72,4 +72,22 @@ class TimeDialSessionTest {
         assertNotEquals(key, timeDialSession(original, subject.copy(id = "other"),
             TimerMode.COUNTDOWN).interactionKey)
     }
+
+    @Test fun activationContextSurvivesAckButChangesForAReplacedTimerOrServer() {
+        val original = state(TimerState(id = "A", status = TimerStatus.PAUSED, targetSeconds = 1_500))
+        val snapshot = requireNotNull(original.snapshot)
+        val context = timeDialSession(original, subject, TimerMode.COUNTDOWN).activationContextKey
+        assertEquals(context, timeDialSession(original.copy(snapshot = snapshot.copy(
+            revision = 2,
+            timer = snapshot.timer.copy(targetSeconds = 1_800),
+        )), subject, TimerMode.COUNTDOWN).activationContextKey)
+        assertNotEquals(context, timeDialSession(original.copy(snapshot = snapshot.copy(
+            timer = snapshot.timer.copy(id = "B"),
+        )), subject, TimerMode.COUNTDOWN).activationContextKey)
+        assertNotEquals(context, timeDialSession(original.copy(
+            settings = ConnectionSettings(baseUrl = "https://other.example", token = "other"),
+        ), subject, TimerMode.COUNTDOWN).activationContextKey)
+        assertNotEquals(context, timeDialSession(original, subject.copy(id = "other"),
+            TimerMode.COUNTDOWN).activationContextKey)
+    }
 }

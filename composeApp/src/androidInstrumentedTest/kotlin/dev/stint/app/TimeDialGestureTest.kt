@@ -38,6 +38,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import dev.stint.app.ui.ClockTimeDial
 import dev.stint.app.ui.TimerClockVisual
+import dev.stint.app.ui.TimeWheelField
 import dev.stint.app.ui.WorkbenchTheme
 import dev.stint.shared.TimerClockStyle
 import dev.stint.shared.countdownClockReading
@@ -83,6 +84,7 @@ class TimeDialGestureTest {
     fun minuteWheelMovesBothDirectionsWithoutChangingSeconds() {
         val harness = renderWheels()
         val surface = awaitSurface(harness)
+        tapAndAwaitActivation(harness, surface.minuteX, surface.wheelCenterY, "분 조절")
 
         verticalDrag(surface.minuteX, surface.lowerY, surface.farUpperY, moveCount = 12)
         waitUntil("minute wheel up commit") { harness.commitAttempts.get() == 1 }
@@ -109,6 +111,7 @@ class TimeDialGestureTest {
     fun secondWheelMovesBothDirectionsWithoutChangingMinutes() {
         val harness = renderWheels()
         val surface = awaitSurface(harness)
+        tapAndAwaitActivation(harness, surface.secondX, surface.wheelCenterY, "초 조절")
 
         verticalDrag(surface.secondX, surface.lowerY, surface.upperY)
         waitUntil("second wheel up commit") { harness.commitAttempts.get() == 1 }
@@ -132,6 +135,7 @@ class TimeDialGestureTest {
     fun subMinuteValueAdjustsSecondsWithoutInventingAMinute() {
         val harness = renderWheels(initialSeconds = 30)
         val surface = awaitSurface(harness)
+        tapAndAwaitActivation(harness, surface.secondX, surface.wheelCenterY, "초 조절")
 
         verticalDrag(surface.secondX, surface.upperY, surface.lowerY)
         waitUntil("sub-minute second commit") { harness.commitAttempts.get() == 1 }
@@ -145,6 +149,7 @@ class TimeDialGestureTest {
     fun cancelledVerticalGestureNeverCommits() {
         val harness = renderWheels()
         val surface = awaitSurface(harness)
+        tapAndAwaitActivation(harness, surface.minuteX, surface.wheelCenterY, "분 조절")
 
         verticalDrag(surface.minuteX, surface.lowerY, surface.upperY,
             finishAction = MotionEvent.ACTION_CANCEL)
@@ -160,6 +165,7 @@ class TimeDialGestureTest {
     fun interactionReplacementDuringGestureCancelsTheOldIntent() {
         val harness = renderWheels()
         val surface = awaitSurface(harness)
+        tapAndAwaitActivation(harness, surface.secondX, surface.wheelCenterY, "초 조절")
         val downTime = sendDown(surface.secondX, surface.lowerY)
         sendMove(downTime, surface.secondX, surface.wheelCenterY)
 
@@ -185,6 +191,96 @@ class TimeDialGestureTest {
     }
 
     @Test
+    fun firstDragInsideUnfocusedDigitsScrollsParentWithoutChangingTime() {
+        val harness = renderWheels(scrollable = true)
+        val surface = awaitSurface(harness)
+
+        verticalDrag(surface.minuteX, surface.lowerY, surface.top + surface.wheelHeight * .05f)
+
+        waitUntil("unfocused digit drag reaches parent scroll") { harness.scrollPosition.get() > 0 }
+        assertEquals(0, harness.commitAttempts.get())
+        assertEquals(0, harness.ticks.get())
+        assertEquals(INITIAL_SECONDS, harness.authoritativeSeconds.get().intValue)
+    }
+
+    @Test
+    fun selectingOneFieldDoesNotLetTheOtherFieldConsumeItsFirstDrag() {
+        val harness = renderWheels(scrollable = true)
+        val surface = awaitSurface(harness)
+        tapAndAwaitActivation(harness, surface.minuteX, surface.wheelCenterY, "분 조절")
+
+        verticalDrag(surface.secondX, surface.lowerY, surface.top + surface.wheelHeight * .05f)
+
+        waitUntil("unselected second drag reaches parent scroll") { harness.scrollPosition.get() > 0 }
+        assertEquals(0, harness.commitAttempts.get())
+        assertEquals(0, harness.ticks.get())
+    }
+
+    @Test
+    fun contextReplacementWithTheSamePendingValueDisarmsTheOldField() {
+        val harness = renderWheels(scrollable = true, acknowledgeImmediately = false)
+        val surface = awaitSurface(harness)
+        tapAndAwaitActivation(harness, surface.minuteX, surface.wheelCenterY, "분 조절")
+        verticalDrag(surface.minuteX, surface.lowerY, surface.upperY)
+        waitUntil("unacknowledged minute commit") { harness.commitAttempts.get() == 1 }
+        val pending = harness.committedSeconds.get()
+
+        instrumentation.runOnMainSync {
+            harness.authoritativeSeconds.get().intValue = pending
+            harness.interactionKey.get().value = "replacement-with-same-value"
+            harness.activationContext.get().value = "context-b"
+        }
+        waitUntil("replacement clears pending preview") {
+            !harness.adjusting.get() && harness.renderedPreviewSeconds.get() == null
+        }
+
+        verticalDrag(surface.minuteX, surface.lowerY, surface.top + surface.wheelHeight * .05f)
+        waitUntil("disarmed replacement drag reaches parent") { harness.scrollPosition.get() > 0 }
+        assertEquals(1, harness.commitAttempts.get())
+    }
+
+    @Test
+    fun mouseWheelNeedsSelectionAndStaysSelectedAcrossAcknowledgement() {
+        val unfocused = renderWheels(scrollable = true)
+        val unfocusedSurface = awaitSurface(unfocused)
+
+        sendMouseScroll(unfocusedSurface.minuteX, unfocusedSurface.wheelCenterY, -4f)
+        if (unfocused.scrollPosition.get() == 0) {
+            sendMouseScroll(unfocusedSurface.minuteX, unfocusedSurface.wheelCenterY, 8f)
+        }
+
+        waitUntil("unfocused mouse wheel reaches parent scroll") { unfocused.scrollPosition.get() > 0 }
+        assertEquals(0, unfocused.commitAttempts.get())
+        assertEquals(0, unfocused.ticks.get())
+
+        scenario?.close()
+        scenario = null
+        val focused = renderWheels()
+        val focusedSurface = awaitSurface(focused)
+        tapAndAwaitActivation(focused, focusedSurface.minuteX, focusedSurface.wheelCenterY, "분 조절")
+        sendMouseScroll(focusedSurface.minuteX, focusedSurface.wheelCenterY, -3f)
+        waitUntil("selected minute mouse wheel commit") { focused.commitAttempts.get() == 1 }
+        val first = focused.committedSeconds.get()
+        assertTrue("Minute wheel must change minutes and preserve seconds", first / 60 != 25 && first % 60 == 17)
+        waitUntil("minute remains selected after ACK") {
+            !focused.adjusting.get() && focused.renderedPreviewSeconds.get() == null &&
+                focused.activatedField.get() == TimeWheelField.MINUTES
+        }
+
+        sendMouseScroll(focusedSurface.minuteX, focusedSurface.wheelCenterY, 2f)
+        waitUntil("selected minute second mouse wheel commit") { focused.commitAttempts.get() == 2 }
+        assertTrue(focused.committedSeconds.get() / 60 != first / 60)
+        val beforeSecond = focused.committedSeconds.get()
+        tapAndAwaitActivation(focused, focusedSurface.secondX, focusedSurface.wheelCenterY, "초 조절")
+        sendMouseScroll(focusedSurface.secondX, focusedSurface.wheelCenterY, -2f)
+        waitUntil("selected second mouse wheel commit") { focused.commitAttempts.get() == 3 }
+        assertEquals("Second wheel must preserve minutes", beforeSecond / 60,
+            focused.committedSeconds.get() / 60)
+        assertTrue("Second wheel must change seconds", beforeSecond % 60 != focused.committedSeconds.get() % 60)
+        assertTrue(focused.ticks.get() >= 3)
+    }
+
+    @Test
     fun disabledWheelsIgnorePointerInput() {
         val harness = renderWheels(enabled = false)
         val surface = awaitSurface(harness)
@@ -201,6 +297,7 @@ class TimeDialGestureTest {
         enabled: Boolean = true,
         scrollable: Boolean = false,
         initialSeconds: Int = INITIAL_SECONDS,
+        acknowledgeImmediately: Boolean = true,
     ): WheelHarness {
         val harness = WheelHarness(initialSeconds)
         val launched = ActivityScenario.launch(MainActivity::class.java).also { scenario = it }
@@ -212,6 +309,9 @@ class TimeDialGestureTest {
                     }
                     val interactionKey = remember {
                         mutableStateOf("timer-a").also(harness.interactionKey::set)
+                    }
+                    val activationContext = remember {
+                        mutableStateOf("context-a").also(harness.activationContext::set)
                     }
                     val scrollState = rememberScrollState()
                     harness.scrollPosition.set(scrollState.value)
@@ -226,6 +326,7 @@ class TimeDialGestureTest {
                                 maximumSeconds = 4 * 60 * 60,
                                 enabled = enabled,
                                 interactionKey = interactionKey.value,
+                                activationContextKey = activationContext.value,
                                 busy = false,
                                 feedbackMessage = null,
                                 onCommit = { seconds, key ->
@@ -234,8 +335,12 @@ class TimeDialGestureTest {
                                         false
                                     } else {
                                         harness.committedSeconds.set(seconds)
-                                        harness.acceptedCommits.incrementAndGet()
-                                        authoritativeSeconds.intValue = seconds
+                                        val accepted = harness.acceptedCommits.incrementAndGet()
+                                        if (acknowledgeImmediately) {
+                                            authoritativeSeconds.intValue = seconds
+                                            // A real server ACK advances revision/target and therefore interactionKey.
+                                            interactionKey.value = "timer-ack-$accepted"
+                                        }
                                         true
                                     }
                                 },
@@ -243,6 +348,7 @@ class TimeDialGestureTest {
                                 modifier = Modifier.width(WHEEL_WIDTH_DP.dp),
                                 onTick = { harness.ticks.incrementAndGet() },
                                 onAdjustingChange = harness.adjusting::set,
+                                onActivatedFieldChange = harness.activatedField::set,
                             ) { previewSeconds, faceHeight, timeContent ->
                                 harness.renderedPreviewSeconds.set(previewSeconds)
                                 val seconds = previewSeconds ?: authoritativeSeconds.intValue
@@ -390,6 +496,38 @@ class TimeDialGestureTest {
         return downTime
     }
 
+    private fun tapAndAwaitActivation(harness: WheelHarness, x: Float, y: Float, label: String) {
+        val downTime = sendDown(x, y)
+        sendUp(downTime, x, y)
+        val expected = if (label.startsWith("분")) TimeWheelField.MINUTES else TimeWheelField.SECONDS
+        waitUntil("$label activation") { harness.activatedField.get() == expected }
+    }
+
+    private fun sendMouseScroll(x: Float, y: Float, verticalAxis: Float) {
+        val properties = arrayOf(MotionEvent.PointerProperties().apply {
+            id = 0
+            toolType = MotionEvent.TOOL_TYPE_MOUSE
+        })
+        val coordinates = arrayOf(MotionEvent.PointerCoords().apply {
+            this.x = x
+            this.y = y
+            pressure = 1f
+            size = 1f
+            setAxisValue(MotionEvent.AXIS_VSCROLL, verticalAxis)
+        })
+        val now = SystemClock.uptimeMillis()
+        val event = MotionEvent.obtain(
+            now, now, MotionEvent.ACTION_SCROLL, 1, properties, coordinates,
+            0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0,
+        )
+        try {
+            instrumentation.sendPointerSync(event)
+            instrumentation.waitForIdleSync()
+        } finally {
+            event.recycle()
+        }
+    }
+
     private fun sendMove(downTime: Long, x: Float, y: Float) {
         SystemClock.sleep(18)
         sendPointer(MotionEvent.ACTION_MOVE, downTime, x, y)
@@ -432,6 +570,7 @@ class TimeDialGestureTest {
     private class WheelHarness(initialSeconds: Int) {
         val authoritativeSeconds = AtomicReference<MutableIntState>()
         val interactionKey = AtomicReference<MutableState<String>>()
+        val activationContext = AtomicReference<MutableState<String>>()
         val committedSeconds = AtomicInteger(initialSeconds)
         val commitAttempts = AtomicInteger()
         val acceptedCommits = AtomicInteger()
@@ -441,6 +580,7 @@ class TimeDialGestureTest {
         val readoutBoundsInWindow = AtomicReference<NumericBounds?>()
         val timeContentMounted = AtomicBoolean()
         val scrollPosition = AtomicInteger()
+        val activatedField = AtomicReference<TimeWheelField?>()
     }
 
     private data class NumericBounds(

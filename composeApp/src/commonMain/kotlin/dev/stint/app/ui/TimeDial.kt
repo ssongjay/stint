@@ -31,6 +31,7 @@ internal fun ClockTimeDial(
     maximumSeconds: Int,
     enabled: Boolean,
     interactionKey: String,
+    activationContextKey: String,
     busy: Boolean,
     feedbackMessage: String?,
     onCommit: (Int, String) -> Boolean,
@@ -38,6 +39,7 @@ internal fun ClockTimeDial(
     modifier: Modifier = Modifier,
     onTick: (() -> Unit)? = null,
     onAdjustingChange: (Boolean) -> Unit = {},
+    onActivatedFieldChange: (TimeWheelField?) -> Unit = {},
     content: @Composable (
         previewSeconds: Int?,
         faceHeight: Dp,
@@ -51,19 +53,25 @@ internal fun ClockTimeDial(
     val tick = onTick ?: platformTick
     val latestCommit by rememberUpdatedState(onCommit)
     val latestAdjustingChange by rememberUpdatedState(onAdjustingChange)
+    val latestActivatedFieldChange by rememberUpdatedState(onActivatedFieldChange)
     val latestKey by rememberUpdatedState(interactionKey)
     val latestEnabled by rememberUpdatedState(dialEnabled)
 
-    var previewSeconds by remember(interactionKey) { mutableStateOf<Int?>(null) }
-    var pendingSeconds by remember(interactionKey) { mutableStateOf<Int?>(null) }
-    var pendingSawBusy by remember(interactionKey) { mutableStateOf(false) }
-    var pendingFeedback by remember(interactionKey) { mutableStateOf<String?>(null) }
-    var gestureActive by remember(interactionKey) { mutableStateOf(false) }
+    var previewSeconds by remember { mutableStateOf<Int?>(null) }
+    var pendingSeconds by remember { mutableStateOf<Int?>(null) }
+    var pendingKey by remember { mutableStateOf<String?>(null) }
+    var pendingSawBusy by remember { mutableStateOf(false) }
+    var pendingFeedback by remember { mutableStateOf<String?>(null) }
+    var gestureActive by remember { mutableStateOf(false) }
+    var activatedField by remember { mutableStateOf<TimeWheelField?>(null) }
+    var activationKey by remember { mutableStateOf<String?>(null) }
+    var activationContext by remember { mutableStateOf<String?>(null) }
     val adjusting = gestureActive || previewSeconds != null || pendingSeconds != null
 
     fun resetToAuthoritative() {
         previewSeconds = null
         pendingSeconds = null
+        pendingKey = null
         pendingSawBusy = false
         pendingFeedback = null
         gestureActive = false
@@ -76,6 +84,7 @@ internal fun ClockTimeDial(
             resetToAuthoritative()
         } else if (latestEnabled && latestCommit(bounded, key)) {
             pendingSeconds = bounded
+            pendingKey = key
             pendingSawBusy = busy
             pendingFeedback = feedbackMessage
             gestureActive = false
@@ -84,12 +93,49 @@ internal fun ClockTimeDial(
         }
     }
 
-    LaunchedEffect(valueSeconds, interactionKey, pendingSeconds) {
+    LaunchedEffect(valueSeconds, interactionKey, pendingSeconds, busy) {
         val pending = pendingSeconds
         if (pending == null) {
             previewSeconds = null
         } else if (valueSeconds == pending && !busy) {
+            val preserveActivation = activationContext == activationContextKey && feedbackMessage == null
             resetToAuthoritative()
+            if (preserveActivation) {
+                activationKey = interactionKey
+            } else {
+                activatedField = null
+                activationKey = null
+                activationContext = null
+            }
+        } else if (!busy && interactionKey != pendingKey) {
+            resetToAuthoritative()
+            activatedField = null
+            activationKey = null
+            activationContext = null
+        }
+    }
+    LaunchedEffect(activationContextKey) {
+        if (activationContext != null && activationContext != activationContextKey) {
+            activatedField = null
+            activationKey = null
+            activationContext = null
+            if (pendingSeconds == null) resetToAuthoritative()
+        }
+    }
+    LaunchedEffect(interactionKey, pendingSeconds) {
+        if (pendingSeconds == null && activationKey != null && activationKey != interactionKey) {
+            resetToAuthoritative()
+            activatedField = null
+            activationKey = null
+            activationContext = null
+        }
+    }
+    LaunchedEffect(windowFocused) {
+        if (!windowFocused) {
+            activatedField = null
+            activationKey = null
+            activationContext = null
+            if (pendingSeconds == null) resetToAuthoritative()
         }
     }
     LaunchedEffect(busy, feedbackMessage, pendingSeconds) {
@@ -107,10 +153,16 @@ internal fun ClockTimeDial(
             if (pendingSeconds != null && valueSeconds != pendingSeconds) resetToAuthoritative()
         }
     }
-    LaunchedEffect(dialEnabled, interactionKey) {
-        if (!dialEnabled && pendingSeconds == null) resetToAuthoritative()
+    LaunchedEffect(dialEnabled, interactionKey, pendingSeconds) {
+        if (!dialEnabled && pendingSeconds == null) {
+            resetToAuthoritative()
+            activatedField = null
+            activationKey = null
+            activationContext = null
+        }
     }
     LaunchedEffect(adjusting) { latestAdjustingChange(adjusting) }
+    LaunchedEffect(activatedField) { latestActivatedFieldChange(activatedField) }
     DisposableEffect(Unit) { onDispose { latestAdjustingChange(false) } }
 
     val displayedSeconds = previewSeconds ?: pendingSeconds ?: valueSeconds
@@ -120,6 +172,20 @@ internal fun ClockTimeDial(
             minimumSeconds = if (hasRange) minimumSeconds else valueSeconds,
             maximumSeconds = if (hasRange) maximumSeconds else valueSeconds,
             enabled = dialEnabled && pendingSeconds == null,
+            activatedField = activatedField,
+            onActivateField = { field ->
+                activatedField = field
+                activationKey = interactionKey
+                activationContext = activationContextKey
+            },
+            onDeactivateField = { field ->
+                if (activatedField == field && pendingSeconds == null) {
+                    activatedField = null
+                    activationKey = null
+                    activationContext = null
+                    if (previewSeconds != null) resetToAuthoritative()
+                }
+            },
             interactionKey = interactionKey,
             textStyle = style,
             modifier = Modifier.fillMaxSize(),

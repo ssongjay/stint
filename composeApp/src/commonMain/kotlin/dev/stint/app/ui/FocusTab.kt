@@ -456,6 +456,7 @@ private fun TimerReadout(
             maximumSeconds = dialSession.maximumSeconds,
             enabled = dialSession.enabled,
             interactionKey = dialSession.interactionKey,
+            activationContextKey = dialSession.activationContextKey,
             busy = dialBusy,
             feedbackMessage = dialFeedback,
             onCommit = onDialCommit,

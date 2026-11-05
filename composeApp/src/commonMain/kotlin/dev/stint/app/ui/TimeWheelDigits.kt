@@ -1,7 +1,8 @@
 package dev.stint.app.ui
 
-import androidx.compose.foundation.focusable
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,7 +23,13 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.MotionDurationScale
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -43,6 +50,7 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -50,7 +58,7 @@ import kotlinx.coroutines.isActive
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-private enum class TimeWheelField { MINUTES, SECONDS }
+internal enum class TimeWheelField { MINUTES, SECONDS }
 
 private data class ReleasedWheelGesture(val velocityY: Float, val interactionKey: String)
 private const val WHEEL_SETTLE_MILLIS = 240L
@@ -64,6 +72,9 @@ internal fun VerticalTimeWheelReadout(
     interactionKey: String,
     textStyle: TextStyle,
     modifier: Modifier = Modifier,
+    activatedField: TimeWheelField? = null,
+    onActivateField: (TimeWheelField) -> Unit = {},
+    onDeactivateField: (TimeWheelField) -> Unit = {},
     onPreview: (Int) -> Unit,
     onSettled: (Int, String) -> Unit,
     onCancel: () -> Unit,
@@ -74,10 +85,10 @@ internal fun VerticalTimeWheelReadout(
     val minuteMaximum = (maximumSeconds.coerceAtLeast(0) / 60).coerceAtLeast(0)
     val secondRange = timeWheelSecondRange(totalSeconds, minimumSeconds, maximumSeconds)
     val minuteDigits = values.minutes.toString().length.coerceAtLeast(2)
-    var activeField by remember(interactionKey) { mutableStateOf<TimeWheelField?>(null) }
+    var gestureField by remember(interactionKey) { mutableStateOf<TimeWheelField?>(null) }
     LaunchedEffect(enabled, interactionKey) {
         if (!enabled) {
-            activeField = null
+            gestureField = null
             onGestureActive(false)
         }
     }
@@ -94,7 +105,10 @@ internal fun VerticalTimeWheelReadout(
                 minimum = 0,
                 maximum = minuteMaximum,
                 enabled = enabled && minuteMaximum > 0 &&
-                    (activeField == null || activeField == TimeWheelField.MINUTES),
+                    (gestureField == null || gestureField == TimeWheelField.MINUTES),
+                activated = activatedField == TimeWheelField.MINUTES,
+                onActivate = { onActivateField(TimeWheelField.MINUTES) },
+                onDeactivate = { onDeactivateField(TimeWheelField.MINUTES) },
                 interactionKey = interactionKey,
                 textStyle = textStyle,
                 textAlign = TextAlign.End,
@@ -107,9 +121,9 @@ internal fun VerticalTimeWheelReadout(
                 },
                 onCancel = onCancel,
                 onGestureActive = { active ->
-                    activeField = if (active) TimeWheelField.MINUTES
-                    else activeField.takeUnless { it == TimeWheelField.MINUTES }
-                    onGestureActive(activeField != null)
+                    gestureField = if (active) TimeWheelField.MINUTES
+                    else gestureField.takeUnless { it == TimeWheelField.MINUTES }
+                    onGestureActive(gestureField != null)
                 },
                 onTick = onTick,
             )
@@ -121,7 +135,10 @@ internal fun VerticalTimeWheelReadout(
                 minimum = secondRange.first,
                 maximum = secondRange.last,
                 enabled = enabled && secondRange.first < secondRange.last &&
-                    (activeField == null || activeField == TimeWheelField.SECONDS),
+                    (gestureField == null || gestureField == TimeWheelField.SECONDS),
+                activated = activatedField == TimeWheelField.SECONDS,
+                onActivate = { onActivateField(TimeWheelField.SECONDS) },
+                onDeactivate = { onDeactivateField(TimeWheelField.SECONDS) },
                 interactionKey = interactionKey,
                 textStyle = textStyle,
                 textAlign = TextAlign.Start,
@@ -134,9 +151,9 @@ internal fun VerticalTimeWheelReadout(
                 },
                 onCancel = onCancel,
                 onGestureActive = { active ->
-                    activeField = if (active) TimeWheelField.SECONDS
-                    else activeField.takeUnless { it == TimeWheelField.SECONDS }
-                    onGestureActive(activeField != null)
+                    gestureField = if (active) TimeWheelField.SECONDS
+                    else gestureField.takeUnless { it == TimeWheelField.SECONDS }
+                    onGestureActive(gestureField != null)
                 },
                 onTick = onTick,
             )
@@ -152,6 +169,9 @@ private fun VerticalTimeWheelField(
     minimum: Int,
     maximum: Int,
     enabled: Boolean,
+    activated: Boolean,
+    onActivate: () -> Unit,
+    onDeactivate: () -> Unit,
     interactionKey: String,
     textStyle: TextStyle,
     textAlign: TextAlign,
@@ -170,11 +190,17 @@ private fun VerticalTimeWheelField(
     val latestGestureActive by rememberUpdatedState(onGestureActive)
     val latestTick by rememberUpdatedState(onTick)
     val density = LocalDensity.current
+    val focusRequester = remember(field) { FocusRequester() }
+    val interactionSource = remember(field) { MutableInteractionSource() }
     val stepPixels = with(density) { textStyle.lineHeight.toPx().coerceAtLeast(18f) }
     var wheelValue by remember(interactionKey, field) { mutableFloatStateOf(value.toFloat()) }
     var gestureActive by remember(interactionKey, field) { mutableStateOf(false) }
     var deferredSettle by remember(interactionKey, field) { mutableStateOf<Int?>(null) }
     var settleRevision by remember(interactionKey, field) { mutableIntStateOf(0) }
+
+    LaunchedEffect(activated, enabled) {
+        if (activated && enabled) focusRequester.requestFocus()
+    }
 
     LaunchedEffect(value, interactionKey, gestureActive) {
         if (!gestureActive) wheelValue = value.toFloat()
@@ -239,9 +265,22 @@ private fun VerticalTimeWheelField(
     val fractional = wheelValue - wheelValue.roundToInt()
     val fieldModifier = modifier
         .clipToBounds()
+        .drawBehind {
+            if (activated) {
+                val markerWidth = 14.dp.toPx()
+                val y = size.height - 5.dp.toPx()
+                drawLine(
+                    color = Clay,
+                    start = androidx.compose.ui.geometry.Offset((size.width - markerWidth) / 2f, y),
+                    end = androidx.compose.ui.geometry.Offset((size.width + markerWidth) / 2f, y),
+                    strokeWidth = 2.dp.toPx(),
+                    cap = StrokeCap.Round,
+                )
+            }
+        }
         .semantics {
             contentDescription = "$label 조절"
-            stateDescription = "$shown$label"
+            stateDescription = if (activated) "$shown$label, 선택됨" else "$shown$label"
             progressBarRangeInfo = ProgressBarRangeInfo(
                 current = wheelValue,
                 range = minimum.toFloat()..maximum.toFloat(),
@@ -270,9 +309,22 @@ private fun VerticalTimeWheelField(
             settleRevision++
             true
         }
-        .focusable(enabled)
-        .pointerInput(enabled, interactionKey, minimum, maximum) {
-            if (!enabled) return@pointerInput
+        .focusRequester(focusRequester)
+        .focusProperties { canFocus = enabled }
+        .onFocusChanged { focusState ->
+            if (focusState.isFocused) onActivate()
+            else if (enabled && activated) onDeactivate()
+        }
+        .clickable(
+            enabled = enabled,
+            interactionSource = interactionSource,
+            indication = null,
+        ) {
+            onActivate()
+            focusRequester.requestFocus()
+        }
+        .pointerInput(enabled, activated, interactionKey, minimum, maximum) {
+            if (!enabled || !activated) return@pointerInput
             awaitPointerEventScope {
                 while (true) {
                     val event = awaitPointerEvent()
@@ -290,8 +342,8 @@ private fun VerticalTimeWheelField(
                 }
             }
         }
-        .pointerInput(enabled, interactionKey, minimum, maximum, stepPixels) {
-            if (!enabled) return@pointerInput
+        .pointerInput(enabled, activated, interactionKey, minimum, maximum, stepPixels) {
+            if (!enabled || !activated) return@pointerInput
             while (currentCoroutineContext().isActive) {
                 val release = try {
                     awaitPointerEventScope {
@@ -306,7 +358,6 @@ private fun VerticalTimeWheelField(
                         var totalY = 0f
                         var vertical = false
                         var released = false
-                        latestGestureActive(true)
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
@@ -324,6 +375,7 @@ private fun VerticalTimeWheelField(
                                 if (abs(totalY) <= abs(totalX) * 1.15f) break
                                 vertical = true
                                 gestureActive = true
+                                latestGestureActive(true)
                                 change.consume()
                                 publish(wheelValueAfterVerticalDrag(
                                     start,
