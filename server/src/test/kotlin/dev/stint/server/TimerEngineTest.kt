@@ -33,6 +33,17 @@ class TimerEngineTest {
     }
 
     @Test
+    fun `pause shares stopwatch overflow and negative progress guards`() {
+        val overflowing = runningTimer(runningSince = 1_000, accumulated = Long.MAX_VALUE - 5)
+            .copy(mode = TimerMode.STOPWATCH)
+        val negative = runningTimer(runningSince = 2_000, accumulated = -500)
+            .copy(mode = TimerMode.STOPWATCH)
+
+        assertEquals(Long.MAX_VALUE, TimerEngine.pause(overflowing, 3_000).accumulatedMillis)
+        assertEquals(0L, TimerEngine.pause(negative, 1_000).accumulatedMillis)
+    }
+
+    @Test
     fun `focus completion records once and starts the proper break at the deadline`() {
         val timer = runningTimer(runningSince = 1_000).copy(completedFocusCount = 1)
 
@@ -126,6 +137,25 @@ class TimerEngineTest {
 
         assertEquals(10, result.session?.durationSeconds)
         assertEquals(TimerStatus.IDLE, result.timer.status)
+    }
+
+    @Test
+    fun `finishing a very long stopwatch keeps the largest representable duration`() {
+        val timer = runningTimer(runningSince = 1_000, accumulated = Long.MAX_VALUE - 5)
+            .copy(mode = TimerMode.STOPWATCH)
+
+        val result = TimerEngine.finish(timer, subject, 3_000, "Mac")
+
+        assertEquals(Int.MAX_VALUE, result.session?.durationSeconds)
+    }
+
+    @Test
+    fun `finishing a countdown still caps elapsed time at its target`() {
+        val timer = runningTimer(runningSince = 1_000, accumulated = Long.MAX_VALUE - 5)
+
+        val result = TimerEngine.finish(timer, subject, 3_000, "Mac")
+
+        assertEquals(timer.targetSeconds, result.session?.durationSeconds)
     }
 
     @Test

@@ -6,6 +6,8 @@ import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerPhase
 import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
+import dev.stint.shared.elapsedMillis
+import dev.stint.shared.elapsedSeconds
 import java.util.UUID
 
 data class Settlement(
@@ -18,21 +20,11 @@ data class Settlement(
  * 기록 id가 필요한 경로의 newId까지 주입하면 시각과 식별자를 고정해 테스트할 수 있다.
  */
 object TimerEngine {
-    fun elapsedMillis(timer: TimerState, nowEpochMs: Long): Long {
-        val runningSince = timer.runningSinceEpochMs
-        val running = if (timer.status == TimerStatus.RUNNING && runningSince != null) {
-            (nowEpochMs - runningSince).coerceAtLeast(0)
-        } else {
-            0L
-        }
-        return timer.accumulatedMillis + running
-    }
-
     fun pause(timer: TimerState, nowEpochMs: Long): TimerState {
         require(timer.status == TimerStatus.RUNNING) { "Only a running timer can be paused" }
         return timer.copy(
             status = TimerStatus.PAUSED,
-            accumulatedMillis = elapsedMillis(timer, nowEpochMs),
+            accumulatedMillis = timer.elapsedMillis(nowEpochMs),
             runningSinceEpochMs = null,
         )
     }
@@ -64,13 +56,7 @@ object TimerEngine {
         deviceName: String,
         newId: () -> String = { UUID.randomUUID().toString() },
     ): Settlement {
-        val elapsedMillis = elapsedMillis(timer, nowEpochMs)
-        val rawDurationSeconds = (elapsedMillis / 1000L).toInt()
-        val durationSeconds = if (timer.mode == TimerMode.COUNTDOWN) {
-            rawDurationSeconds.coerceAtMost(timer.targetSeconds)
-        } else {
-            rawDurationSeconds
-        }
+        val durationSeconds = timer.elapsedSeconds(nowEpochMs)
         val subjectId = timer.subjectId
         val startedAt = timer.startedAtEpochMs
         val session = if (
