@@ -51,11 +51,18 @@ class TimerLiveNotificationTest {
             assumeTrue("Read-only service acceptance needs an existing active session",
                 state.snapshot?.timer?.status?.let { it != TimerStatus.IDLE } == true)
             val deadline = SystemClock.elapsedRealtime() + 5_000
-            while (!TimerStatusService.running && SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(50)
-            assertTrue(TimerStatusService.running)
+            while (manager.activeNotifications.none { it.id == TimerNotification.NOTIFICATION_ID } &&
+                SystemClock.elapsedRealtime() < deadline
+            ) {
+                SystemClock.sleep(50)
+            }
+            assertTrue(manager.activeNotifications.any { it.id == TimerNotification.NOTIFICATION_ID })
             scenario.moveToState(Lifecycle.State.CREATED)
             SystemClock.sleep(350)
-            assertTrue("Background service must outlive the activity", TimerStatusService.running)
+            assertTrue(
+                "Background service must outlive the activity",
+                manager.activeNotifications.any { it.id == TimerNotification.NOTIFICATION_ID },
+            )
             val active = manager.activeNotifications.first { it.id == TimerNotification.NOTIFICATION_ID }.notification
             assertTrue(active.flags and Notification.FLAG_FOREGROUND_SERVICE != 0)
             assertEquals(state.snapshot?.timer?.id, controller.state.value.snapshot?.timer?.id)

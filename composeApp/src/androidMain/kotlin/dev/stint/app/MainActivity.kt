@@ -1,48 +1,54 @@
 package dev.stint.app
 
-import android.app.Application
 import android.Manifest
+import android.app.Application
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.repeatOnLifecycle
-import dev.stint.shared.TimerStatus
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.distinctUntilChanged
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.window.layout.FoldingFeature
 import androidx.window.layout.WindowInfoTracker
 import dev.stint.app.ui.FoldPosture
 import dev.stint.app.ui.StintApp
 import dev.stint.app.updates.AndroidAppUpdater
 import dev.stint.app.updates.AndroidUpdateSection
+import dev.stint.shared.TimerStatus
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.serialization.kotlinx.json.json
-import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 
 class MainActivity : ComponentActivity() {
     // 화면 회전·접힘 전환으로 Activity가 다시 만들어져도 Application의 컨트롤러는 그대로 쓴다.
     private val viewModel: StintViewModel by viewModels()
     private val controller get() = viewModel.controller
+    private val notificationPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) startTimerStatus()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 401)
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -84,18 +90,10 @@ class MainActivity : ComponentActivity() {
         startTimerStatus()
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 401 && grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            startTimerStatus()
-        }
-    }
-
     private fun startTimerStatus() {
         // 진행 중 타이머가 없으면 foreground service를 띄우지 않아 상시 알림과 배터리 비용을 피한다.
         if (controller.state.value.snapshot?.timer?.status?.let { it != TimerStatus.IDLE } != true) return
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
-        if (TimerStatusService.running) return
         try {
             startForegroundService(Intent(this, TimerStatusService::class.java))
         } catch (_: IllegalStateException) {

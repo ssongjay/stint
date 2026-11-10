@@ -241,6 +241,77 @@ class TimerNotificationPolicyTest {
         assertFalse(notificationCommandMatches(TimerNotificationPolicy.ACTION_FINISH, forged, idle))
     }
 
+    @Test
+    fun `render key coalesces sub-second running ticks`() {
+        val running = state(
+            timer = TimerState(
+                id = "timer-a",
+                subjectId = "subject",
+                status = TimerStatus.RUNNING,
+                runningSinceEpochMs = 90_000L,
+            ),
+            serverNow = 100_000L,
+            revision = 8L,
+        )
+
+        assertEquals(
+            timerNotificationRenderKey(running),
+            timerNotificationRenderKey(running.copy(serverNowEpochMs = 100_999L)),
+        )
+        assertTrue(
+            timerNotificationRenderKey(running) !=
+                timerNotificationRenderKey(running.copy(serverNowEpochMs = 101_000L)),
+        )
+    }
+
+    @Test
+    fun `render key names every state change that requires a new notification`() {
+        val running = state(
+            timer = TimerState(
+                id = "timer-a",
+                subjectId = "subject",
+                status = TimerStatus.RUNNING,
+                runningSinceEpochMs = 90_000L,
+            ),
+            serverNow = 100_000L,
+            revision = 8L,
+        )
+        val baseline = timerNotificationRenderKey(running)
+
+        assertTrue(baseline != timerNotificationRenderKey(running.copy(connection = ConnectionStatus.OFFLINE)))
+        assertTrue(baseline != timerNotificationRenderKey(running.copy(working = true)))
+        assertTrue(
+            baseline != timerNotificationRenderKey(
+                running.copy(snapshot = running.snapshot?.copy(revision = 9L)),
+            ),
+        )
+        val snapshot = assertNotNull(running.snapshot)
+        val paused = running.copy(
+            snapshot = snapshot.copy(timer = snapshot.timer.copy(status = TimerStatus.PAUSED)),
+        )
+        assertEquals(
+            timerNotificationRenderKey(paused),
+            timerNotificationRenderKey(paused.copy(serverNowEpochMs = 101_000L)),
+        )
+    }
+
+    @Test
+    fun `service stop ignores a stale idle observation after a newer timer starts`() {
+        val idle = state(TimerState(), revision = 10L)
+        val running = state(
+            timer = TimerState(
+                id = "timer-new",
+                subjectId = "subject",
+                status = TimerStatus.RUNNING,
+            ),
+            revision = 11L,
+        )
+
+        assertEquals(7, timerStatusServiceStopStartId(idle, idle, latestStartId = 7))
+        assertNull(timerStatusServiceStopStartId(idle, running, latestStartId = 8))
+        assertNull(timerStatusServiceStopStartId(idle, idle, latestStartId = 0))
+    }
+
     private fun state(
         timer: TimerState,
         serverNow: Long = 100_000,

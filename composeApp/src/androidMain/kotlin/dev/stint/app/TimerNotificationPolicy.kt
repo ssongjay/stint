@@ -44,6 +44,25 @@ internal data class TimerNotificationPresentation(
     val actionsEnabled: Boolean,
 )
 
+/** Fields that require rebuilding the status notification rather than letting its chronometer tick. */
+internal data class TimerNotificationRenderKey(
+    val revision: Long?,
+    val connection: ConnectionStatus,
+    val working: Boolean,
+    val runningSecond: Long,
+)
+
+internal fun timerNotificationRenderKey(state: ClientState): TimerNotificationRenderKey {
+    val ticking = state.connection == ConnectionStatus.CONNECTED &&
+        state.snapshot?.timer?.status == TimerStatus.RUNNING
+    return TimerNotificationRenderKey(
+        revision = state.snapshot?.revision,
+        connection = state.connection,
+        working = state.working,
+        runningSecond = if (ticking) state.serverNowEpochMs / 1_000L else 0L,
+    )
+}
+
 internal fun notificationCommandGuard(state: ClientState): NotificationCommandGuard? {
     val snapshot = state.snapshot ?: return null
     val timer = snapshot.timer
