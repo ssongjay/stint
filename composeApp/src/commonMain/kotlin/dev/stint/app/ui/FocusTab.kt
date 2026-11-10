@@ -154,14 +154,19 @@ internal fun FocusTab(
             }
         },
     ) {
-        val hingeLeft = (foldPosture.hingeLeftDp - contentOriginX).coerceAtLeast(0f)
-        val hingeTop = (foldPosture.hingeTopDp - contentOriginY).coerceAtLeast(0f)
-        val validBook = foldPosture.isBook && hingeLeft > 120f && hingeLeft + foldPosture.hingeWidthDp < maxWidth.value - 120f
-        val validTabletop = foldPosture.isTabletop && hingeTop > 120f && hingeTop + foldPosture.hingeHeightDp < maxHeight.value - 120f
+        val foldGeometry = resolveFoldContentGeometry(
+            posture = foldPosture,
+            contentOriginXDp = contentOriginX,
+            contentOriginYDp = contentOriginY,
+            contentWidthDp = maxWidth.value,
+            contentHeightDp = maxHeight.value,
+        )
+        val hingeLeft = foldGeometry.hingeLeftDp
+        val hingeTop = foldGeometry.hingeTopDp
         val bookClockHeight = (maxHeight.value - 320f).coerceIn(132f, 240f).dp
 
         when {
-            validTabletop -> TabletopFocus(
+            foldGeometry.validTabletop -> TabletopFocus(
                 controller = controller,
                 state = state,
                 nowEpochMs = nowEpochMs,
@@ -179,7 +184,7 @@ internal fun FocusTab(
                 actionAvailability = actionAvailability,
             )
 
-            validBook -> Row(Modifier.fillMaxSize()) {
+            foldGeometry.validBook -> Row(Modifier.fillMaxSize()) {
                 mainContent(Modifier.width(hingeLeft.dp).fillMaxHeight(), true, bookClockHeight)
                 Spacer(Modifier.width(foldPosture.hingeWidthDp.dp))
                 TodayLedger(

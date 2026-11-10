@@ -145,19 +145,24 @@ internal fun RecordsTab(
             }
         },
     ) {
-        val hingeLeft = (foldPosture.hingeLeftDp - contentOriginX).coerceAtLeast(0f)
-        val hingeTop = (foldPosture.hingeTopDp - contentOriginY).coerceAtLeast(0f)
-        val validBook = foldPosture.isBook && hingeLeft > 120f && hingeLeft + foldPosture.hingeWidthDp < maxWidth.value - 120f
-        val validTabletop = foldPosture.isTabletop && hingeTop > 120f && hingeTop + foldPosture.hingeHeightDp < maxHeight.value - 120f
+        val foldGeometry = resolveFoldContentGeometry(
+            posture = foldPosture,
+            contentOriginXDp = contentOriginX,
+            contentOriginYDp = contentOriginY,
+            contentWidthDp = maxWidth.value,
+            contentHeightDp = maxHeight.value,
+        )
+        val hingeLeft = foldGeometry.hingeLeftDp
+        val hingeTop = foldGeometry.hingeTopDp
 
         when {
-            validTabletop -> Column(Modifier.fillMaxSize()) {
+            foldGeometry.validTabletop -> Column(Modifier.fillMaxSize()) {
                 overview(Modifier.fillMaxWidth().height(hingeTop.dp), true)
                 Spacer(Modifier.height(foldPosture.hingeHeightDp.dp))
                 ledger(Modifier.fillMaxWidth().weight(1f), true)
             }
 
-            validBook -> Row(Modifier.fillMaxSize()) {
+            foldGeometry.validBook -> Row(Modifier.fillMaxSize()) {
                 overview(Modifier.width(hingeLeft.dp).fillMaxHeight(), true)
                 Spacer(Modifier.width(foldPosture.hingeWidthDp.dp))
                 ledger(Modifier.weight(1f).fillMaxHeight(), true)
