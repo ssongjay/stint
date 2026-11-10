@@ -126,29 +126,30 @@ internal fun SubjectEditor(
                         val short = durationSeconds(shortBreakMinutes, shortBreakSeconds)
                         val long = durationSeconds(longBreakMinutes, longBreakSeconds)
                         val every = longBreakEvery.toIntOrNull()
-                        error = when {
-                            name.isBlank() -> "주제 이름을 입력해 주세요."
-                            focus == null || focus !in 1..14_400 -> "집중 시간은 1초부터 240분까지 입력할 수 있어요."
-                            short == null || short !in 1..3_600 -> "짧은 휴식은 1초부터 60분까지 입력할 수 있어요."
-                            long == null || long !in 1..7_200 -> "긴 휴식은 1초부터 120분까지 입력할 수 있어요."
-                            every == null || every !in 2..12 -> "긴 휴식 간격은 2회부터 12회까지 입력할 수 있어요."
-                            else -> null
-                        }
-                        if (error == null) {
-                            onSave(
-                                Subject(
-                                    id = original?.id ?: "subject-${nowEpochMs.toString(36)}",
-                                    name = name.trim(),
-                                    colorHex = color,
-                                    focusSeconds = focus!!,
-                                    shortBreakSeconds = short!!,
-                                    longBreakSeconds = long!!,
-                                    longBreakEvery = every!!,
-                                    archived = original?.archived ?: false,
-                                    pomodoroEnabled = original?.pomodoroEnabled ?: true,
-                                    autoStartBreak = original?.autoStartBreak ?: true,
-                                ),
-                            )
+                        if (name.isBlank()) {
+                            error = "주제 이름을 입력해 주세요."
+                        } else {
+                            when (val validation = validateTimeDefaults(focus, short, long, every)) {
+                                is TimeDefaultsValidation.Invalid -> error = validation.message
+                                is TimeDefaultsValidation.Valid -> {
+                                    error = null
+                                    val defaults = validation.defaults
+                                    onSave(
+                                        Subject(
+                                            id = original?.id ?: "subject-${nowEpochMs.toString(36)}",
+                                            name = name.trim(),
+                                            colorHex = color,
+                                            focusSeconds = defaults.focusSeconds,
+                                            shortBreakSeconds = defaults.shortBreakSeconds,
+                                            longBreakSeconds = defaults.longBreakSeconds,
+                                            longBreakEvery = defaults.longBreakEvery,
+                                            archived = original?.archived ?: false,
+                                            pomodoroEnabled = original?.pomodoroEnabled ?: true,
+                                            autoStartBreak = original?.autoStartBreak ?: true,
+                                        ),
+                                    )
+                                }
+                            }
                         }
                     },
                     modifier = Modifier.height(52.dp),

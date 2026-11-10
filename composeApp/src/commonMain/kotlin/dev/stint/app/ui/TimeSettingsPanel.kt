@@ -141,12 +141,20 @@ internal fun TimeSettingsPanel(
                 onPause = onPause,
                 onSave = {
                     val requestedSeconds = durationSeconds(currentMinutes, currentSeconds)
-                    currentError = currentDurationError(requestedSeconds, currentMaxSeconds, timer.elapsedMillis(nowEpochMs))
-                    if (currentError == null) {
-                        if (requestedSeconds == timer.targetSeconds) onClose()
-                        else {
-                            pendingCurrentSeconds = requestedSeconds
-                            onSaveCurrent(requestedSeconds!!)
+                    when (val validation = validateCurrentDuration(
+                        totalSeconds = requestedSeconds,
+                        maxSeconds = currentMaxSeconds,
+                        elapsedMillis = timer.elapsedMillis(nowEpochMs),
+                    )) {
+                        is CurrentDurationValidation.Invalid -> currentError = validation.message
+                        is CurrentDurationValidation.Valid -> {
+                            currentError = null
+                            if (validation.totalSeconds == timer.targetSeconds) {
+                                onClose()
+                            } else {
+                                pendingCurrentSeconds = validation.totalSeconds
+                                onSaveCurrent(validation.totalSeconds)
+                            }
                         }
                     }
                 },
@@ -201,18 +209,25 @@ internal fun TimeSettingsPanel(
                     val short = durationSeconds(shortBreakMinutes, shortBreakSeconds)
                     val long = durationSeconds(longBreakMinutes, longBreakSeconds)
                     val every = longBreakEvery.toIntOrNull()
-                    defaultsError = defaultDurationError(focus, short, long, every)
-                    if (defaultsError == null && subject != null) {
-                        val requested = subject.copy(
-                            focusSeconds = focus!!,
-                            shortBreakSeconds = short!!,
-                            longBreakSeconds = long!!,
-                            longBreakEvery = every!!,
-                        )
-                        if (subject.hasSameTimeDefaults(requested)) onClose()
-                        else {
-                            pendingDefaults = requested
-                            onSaveDefaults(requested)
+                    when (val validation = validateTimeDefaults(focus, short, long, every)) {
+                        is TimeDefaultsValidation.Invalid -> defaultsError = validation.message
+                        is TimeDefaultsValidation.Valid -> {
+                            defaultsError = null
+                            val currentSubject = subject
+                            if (currentSubject != null) {
+                                val defaults = validation.defaults
+                                val requested = currentSubject.copy(
+                                    focusSeconds = defaults.focusSeconds,
+                                    shortBreakSeconds = defaults.shortBreakSeconds,
+                                    longBreakSeconds = defaults.longBreakSeconds,
+                                    longBreakEvery = defaults.longBreakEvery,
+                                )
+                                if (currentSubject.hasSameTimeDefaults(requested)) onClose()
+                                else {
+                                    pendingDefaults = requested
+                                    onSaveDefaults(requested)
+                                }
+                            }
                         }
                     }
                 },
@@ -346,18 +361,21 @@ private fun MinuteInput(
     )
 }
 
-internal fun currentDurationError(totalSeconds: Int?, maxSeconds: Int, elapsedMillis: Long): String? = when {
-    totalSeconds == null || totalSeconds !in 1..maxSeconds -> "전체 목표는 1초부터 ${maxSeconds / 60}분까지 입력할 수 있어요."
-    totalSeconds * 1000L <= elapsedMillis -> "이미 지난 시간보다 길게 설정해 주세요."
-    else -> null
+internal sealed interface CurrentDurationValidation {
+    data class Valid(val totalSeconds: Int) : CurrentDurationValidation
+    data class Invalid(val message: String) : CurrentDurationValidation
 }
 
-internal fun defaultDurationError(focus: Int?, short: Int?, long: Int?, every: Int?): String? = when {
-    focus == null || focus !in 1..14_400 -> "집중 시간은 1초부터 240분까지 입력할 수 있어요."
-    short == null || short !in 1..3_600 -> "짧은 휴식은 1초부터 60분까지 입력할 수 있어요."
-    long == null || long !in 1..7_200 -> "긴 휴식은 1초부터 120분까지 입력할 수 있어요."
-    every == null || every !in 2..12 -> "긴 휴식 간격은 2회부터 12회까지 입력할 수 있어요."
-    else -> null
+internal fun validateCurrentDuration(
+    totalSeconds: Int?,
+    maxSeconds: Int,
+    elapsedMillis: Long,
+): CurrentDurationValidation = when {
+    totalSeconds == null || totalSeconds !in 1..maxSeconds -> CurrentDurationValidation.Invalid(
+        "전체 목표는 1초부터 ${maxSeconds / 60}분까지 입력할 수 있어요.",
+    )
+    totalSeconds * 1000L <= elapsedMillis -> CurrentDurationValidation.Invalid("이미 지난 시간보다 길게 설정해 주세요.")
+    else -> CurrentDurationValidation.Valid(totalSeconds)
 }
 
 private fun presetsFor(phase: TimerPhase): List<Int> = when (phase) {
