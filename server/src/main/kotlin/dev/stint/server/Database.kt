@@ -18,11 +18,15 @@ class Database(private val config: ServerConfig) : AutoCloseable {
 
     fun connection(): Connection = dataSource.connection
 
-    fun isReady(): Boolean = runCatching {
+    fun isReady(): Boolean = try {
         connection().use { connection ->
-            connection.createStatement().use { it.executeQuery("SELECT 1").next() }
+            connection.createStatement().use { statement ->
+                statement.executeQuery("SELECT 1").use { it.next() }
+            }
         }
-    }.getOrDefault(false)
+    } catch (_: Exception) {
+        false
+    }
 
     /**
      * 반복 실행 가능한 스키마 보강 뒤 초기 데이터를 이관한다.
@@ -39,9 +43,8 @@ class Database(private val config: ServerConfig) : AutoCloseable {
                 seed(connection)
                 seedRecentMemos(connection)
                 connection.commit()
-            } catch (error: Throwable) {
-                connection.rollback()
-                throw error
+            } catch (error: Exception) {
+                connection.rollbackAndRethrow(error)
             }
         }
     }

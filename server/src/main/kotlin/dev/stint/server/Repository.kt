@@ -40,9 +40,8 @@ class StintRepository(
             val result = snapshot(connection, clock.nowEpochMs())
             connection.commit()
             result
-        } catch (error: Throwable) {
-            connection.rollback()
-            throw error
+        } catch (error: Exception) {
+            connection.rollbackAndRethrow(error)
         }
     }
 
@@ -187,9 +186,8 @@ class StintRepository(
             val result = snapshot(connection, now)
             connection.commit()
             MutationResult(result, changed = true)
-        } catch (error: Throwable) {
-            connection.rollback()
-            throw error
+        } catch (error: Exception) {
+            connection.rollbackAndRethrow(error)
         }
     }
 
@@ -233,11 +231,9 @@ class StintRepository(
                 val result = snapshot(connection, now)
                 connection.commit()
                 MutationResult(result, changed = true)
-            } catch (error: Throwable) {
-                if (error !is RevisionConflictException || !error.stateChanged) {
-                    runCatching { connection.rollback() }
-                }
-                throw error
+            } catch (error: Exception) {
+                if (error is RevisionConflictException && error.stateChanged) throw error
+                connection.rollbackAndRethrow(error)
             }
         }
     }
