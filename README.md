@@ -42,6 +42,8 @@ Compose Multiplatform 화면과 Ktor/MySQL 서버를 사용하며 iCloud에 의�
 그다음 시간 편집은 `TimeDial.kt`와 `TimeWheelDigits.kt`, 회고는 `MemoEditor.kt`와
 `MemoHistory.kt`를 읽는다. Mac 메뉴 막대·알림·저장소는 `desktopMain`, Android의
 접힘 자세·알림·업데이트·저장소는 `androidMain`에서 공통 코드와 만나는 지점을 찾는다.
+시간 검증의 `Valid/Invalid`는 `TimeDefaultsValidation.kt`, 기기 공통 종료 시각은
+`SynchronizedCountdown.kt`, 두 화면의 힌지 투영은 `FoldContentGeometry.kt`에 모은다.
 실행 규칙은 단위 테스트, 저장 경계는 MySQL 통합 테스트, 터치·키보드는 계측 테스트와
 함께 읽으면 각 코드가 보호하는 동작을 확인할 수 있다.
 

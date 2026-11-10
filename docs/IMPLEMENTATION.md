@@ -17,6 +17,26 @@
 - composeApp: 공통 화면, 동기화 컨트롤러, macOS/Android 진입점과 로컬 저장.
 - scripts: 로컬 전용 MySQL 개발 환경과 검증 도구.
 
+### Kotlin 구현 규칙
+
+- 서버의 경과 시간 계산은 `shared`의 `TimerState.elapsedMillis/elapsedSeconds`를 사용한다.
+  카운트다운의 목표 제한과 스톱워치의 정수 범위 방어를 각 모듈에 복제하지 않는다.
+- 종료 알림의 공통 key·deadline·주제는 `SynchronizedCountdown`에서 계산한다.
+  Android의 alarm trigger와 macOS의 예약 지연·알림 문구는 각 플랫폼에 남긴다.
+- 시간 입력은 `Valid/Invalid`로 검증 결과와 값을 함께 전달한다. 별도의 오류 검사 뒤
+  nullable 값을 강제 해제하거나 같은 범위·오류 문구를 화면마다 복사하지 않는다.
+- 코루틴의 `CancellationException`은 종료 신호로 전파한다. suspend 오류 본문 파싱을
+  `runCatching`으로 감싸 취소를 사용자 오류로 바꾸지 않는다.
+- 트랜잭션 정리 실패는 원래 예외에 suppressed로 보존한다. MySQL DDL의 암묵적 커밋과
+  일반 상태 변경 트랜잭션의 원자성은 구분한다.
+- 알림 렌더 판단은 `List<Any?>` 대신 이름 있는 불변 key를 사용한다. 서비스 시작 여부를
+  별도 전역 Boolean으로 추정하지 않으며, 오래된 정지는 Android의 `startId`로 제한한다.
+
+다이얼의 여러 편집 상태를 하나의 reducer로 바꾸는 작업과 UI/컨트롤러 시계 소유권 통합은
+별도 설계 범위다. 현재 UI의 단조 시계 보간을 단순 중복으로 보고 제거하지 않는다.
+완료 알림 저장소의 `commit()` 실패 복구도 별도 범위다. 실패해도 메모리에 새 값이 보일 수
+있어, 반환값만 바꾸기 전에 전달 재시도·arm 삭제·프로세스 재생성을 함께 검증해야 한다.
+
 ## 동기화 규칙
 
 한 사용자에게 진행 중 타이머는 하나다. 변경마다 전역 revision이 증가한다.
