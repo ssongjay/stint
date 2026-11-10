@@ -2,11 +2,10 @@ package dev.stint.app
 
 import dev.stint.app.client.TimerCompletionEvent
 import dev.stint.app.client.TimerCompletionTracker
+import dev.stint.app.client.synchronizedCountdownOrNull
 import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionStatus
-import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerPhase
-import dev.stint.shared.TimerStatus
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlinx.coroutines.Dispatchers
@@ -130,32 +129,21 @@ internal class DesktopCompletionNotifications(
 internal fun desktopCompletionPlan(state: ClientState): DesktopCompletionPlan? {
     // OS 예약 알림은 로컬 추측이 아니라 서버가 확정한 실행 상태와 서버 시각으로만 만든다.
     if (state.connection != ConnectionStatus.CONNECTED || state.working) return null
-    val snapshot = state.snapshot ?: return null
-    val timer = snapshot.timer
-    if (timer.status != TimerStatus.RUNNING || timer.mode != TimerMode.COUNTDOWN) return null
-    val timerId = timer.id ?: return null
-    val startedAt = timer.startedAtEpochMs ?: return null
-    val runningSince = timer.runningSinceEpochMs ?: return null
-    val remainingAtResume = (
-        timer.targetSeconds.coerceAtLeast(0).toLong() * 1_000L -
-            timer.accumulatedMillis.coerceAtLeast(0L)
-        ).coerceAtLeast(0L)
-    val deadline = addSaturated(runningSince, remainingAtResume)
-    if (deadline <= state.serverNowEpochMs) return null
-    val subjectName = snapshot.subjects.firstOrNull { it.id == timer.subjectId }?.name.orEmpty()
-    val subjectPrefix = subjectName.takeIf(String::isNotBlank)?.let { "$it · " }.orEmpty()
-    val (title, body) = when (timer.phase) {
+    val countdown = state.synchronizedCountdownOrNull() ?: return null
+    if (countdown.deadlineEpochMs <= state.serverNowEpochMs) return null
+    val subjectPrefix = countdown.subjectName.takeIf(String::isNotBlank)?.let { "$it · " }.orEmpty()
+    val (title, body) = when (countdown.phase) {
         TimerPhase.FOCUS -> "집중을 마쳤어요" to "${subjectPrefix}잠시 쉬어가세요."
         TimerPhase.SHORT_BREAK,
         TimerPhase.LONG_BREAK,
         -> "휴식이 끝났어요" to "${subjectPrefix}다음 집중을 시작할 준비가 됐어요."
     }
     return DesktopCompletionPlan(
-        identifier = nativeNotificationIdentifier(timerId, timer.phase, startedAt),
+        identifier = nativeNotificationIdentifier(countdown.key),
         title = title,
         body = body,
-        deadlineEpochMs = deadline,
-        delayMillis = (deadline - state.serverNowEpochMs).coerceAtLeast(100L),
+        deadlineEpochMs = countdown.deadlineEpochMs,
+        delayMillis = (countdown.deadlineEpochMs - state.serverNowEpochMs).coerceAtLeast(100L),
     )
 }
 
@@ -220,14 +208,8 @@ private class NativeDesktopNotificationBridge : DesktopNotificationBridge {
     }
 }
 
-private fun nativeNotificationIdentifier(timerId: String, phase: TimerPhase, startedAtEpochMs: Long): String =
-    nativeNotificationIdentifier("$timerId|${phase.name}|$startedAtEpochMs")
-
 private fun nativeNotificationIdentifier(key: String): String =
     "stint.timer." + key.replace(Regex("[^A-Za-z0-9._-]"), "_")
-
-private fun addSaturated(left: Long, right: Long): Long =
-    if (right > 0L && left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
 
 private fun DesktopCompletionPlan.signature() = DesktopCompletionSignature(
     identifier = identifier,

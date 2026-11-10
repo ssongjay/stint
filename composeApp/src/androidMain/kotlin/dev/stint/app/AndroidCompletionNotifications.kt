@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.SystemClock
 import dev.stint.app.client.TimerCompletionEvent
 import dev.stint.app.client.TimerCompletionTracker
+import dev.stint.app.client.synchronizedCountdownOrNull
 import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.ConnectionStatus
@@ -110,30 +111,22 @@ internal fun completionAlarmArm(
 ): CompletionAlarmArm? {
     if (state.connection != ConnectionStatus.CONNECTED || state.working) return null
     val snapshot = state.snapshot ?: return null
-    val timer = snapshot.timer
-    if (timer.status != TimerStatus.RUNNING || timer.mode != TimerMode.COUNTDOWN) return null
-    val timerId = timer.id ?: return null
-    val subjectId = timer.subjectId ?: return null
-    val startedAt = timer.startedAtEpochMs ?: return null
-    val runningSince = timer.runningSinceEpochMs ?: return null
-    val targetMillis = timer.targetSeconds.coerceAtLeast(0).toLong() * 1_000L
-    val remainingAtResume = (targetMillis - timer.accumulatedMillis.coerceAtLeast(0L)).coerceAtLeast(0L)
-    val deadline = addSaturated(runningSince, remainingAtResume)
-    val remaining = (deadline - state.serverNowEpochMs).coerceAtLeast(0L)
+    val countdown = state.synchronizedCountdownOrNull() ?: return null
+    val subjectId = countdown.subjectId ?: return null
+    val remaining = (countdown.deadlineEpochMs - state.serverNowEpochMs).coerceAtLeast(0L)
     if (remaining == 0L) return null
-    val subjectName = snapshot.subjects.firstOrNull { it.id == subjectId }?.name.orEmpty()
     return CompletionAlarmArm(
         identityHash = identityHash,
-        key = "$timerId|${timer.phase.name}|$startedAt",
-        timerId = timerId,
+        key = countdown.key,
+        timerId = countdown.timerId,
         subjectId = subjectId,
-        subjectName = subjectName,
-        phase = timer.phase,
-        startedAtEpochMs = startedAt,
-        runningSinceEpochMs = runningSince,
-        accumulatedMillis = timer.accumulatedMillis,
-        targetSeconds = timer.targetSeconds,
-        deadlineEpochMs = deadline,
+        subjectName = countdown.subjectName,
+        phase = countdown.phase,
+        startedAtEpochMs = countdown.startedAtEpochMs,
+        runningSinceEpochMs = countdown.runningSinceEpochMs,
+        accumulatedMillis = countdown.accumulatedMillis,
+        targetSeconds = countdown.targetSeconds,
+        deadlineEpochMs = countdown.deadlineEpochMs,
         triggerElapsedRealtimeMs = addSaturated(elapsedRealtimeMs, remaining),
         triggerWallClockEpochMs = addSaturated(wallClockEpochMs, remaining),
         revision = snapshot.revision,

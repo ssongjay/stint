@@ -5,7 +5,6 @@ import dev.stint.shared.ConnectionStatus
 import dev.stint.shared.FocusSession
 import dev.stint.shared.TimerMode
 import dev.stint.shared.TimerPhase
-import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
 
 internal data class TimerCompletionEvent(
@@ -28,7 +27,7 @@ internal class TimerCompletionTracker(
     private val delivered = linkedSetOf<String>()
     private var connectionIdentity: ConnectionIdentity? = null
     private var connectedBaselineSeen = false
-    private var tracked: TrackedCountdown? = null
+    private var tracked: SynchronizedCountdown? = null
 
     init {
         initialDeliveredKeys.toList().takeLast(MAX_DELIVERED_KEYS).forEach(delivered::add)
@@ -50,7 +49,7 @@ internal class TimerCompletionTracker(
         }
 
         val now = state.serverNowEpochMs
-        val current = trackedCountdown(state)
+        val current = state.synchronizedCountdownOrNull()
         if (!connectedBaselineSeen) {
             connectedBaselineSeen = true
             tracked = current?.takeIf { it.deadlineEpochMs > now && it.key !in delivered }
@@ -80,7 +79,7 @@ internal class TimerCompletionTracker(
 
     fun deliveredKeys(): Set<String> = delivered.toSet()
 
-    private fun deliver(countdown: TrackedCountdown): TimerCompletionEvent? {
+    private fun deliver(countdown: SynchronizedCountdown): TimerCompletionEvent? {
         if (!delivered.add(countdown.key)) return null
         while (delivered.size > MAX_DELIVERED_KEYS) delivered.remove(delivered.first())
         val subjectPrefix = countdown.subjectName.takeIf(String::isNotBlank)?.let { "$it · " }.orEmpty()
@@ -103,7 +102,7 @@ internal class TimerCompletionTracker(
         }
     }
 
-    private fun naturalTransitionConfirmed(previous: TrackedCountdown, state: ClientState): Boolean {
+    private fun naturalTransitionConfirmed(previous: SynchronizedCountdown, state: ClientState): Boolean {
         val snapshot = state.snapshot ?: return false
         if (snapshot.timer.id != previous.timerId) return false
         return when (previous.phase) {
@@ -114,54 +113,16 @@ internal class TimerCompletionTracker(
         }
     }
 
-    private fun FocusSession.confirms(previous: TrackedCountdown): Boolean =
+    private fun FocusSession.confirms(previous: SynchronizedCountdown): Boolean =
         id == previous.timerId &&
             startedAtEpochMs == previous.startedAtEpochMs &&
             endedAtEpochMs == previous.deadlineEpochMs &&
             durationSeconds == previous.targetSeconds &&
             mode == TimerMode.COUNTDOWN
 
-    private fun trackedCountdown(state: ClientState): TrackedCountdown? {
-        val snapshot = state.snapshot ?: return null
-        val timer = snapshot.timer
-        if (timer.status != TimerStatus.RUNNING || timer.mode != TimerMode.COUNTDOWN) return null
-        val timerId = timer.id ?: return null
-        val runningSince = timer.runningSinceEpochMs ?: return null
-        val startedAt = timer.startedAtEpochMs ?: return null
-        val targetMillis = timer.targetSeconds.coerceAtLeast(0).toLong() * 1_000L
-        val remainingAtResume = (targetMillis - timer.accumulatedMillis.coerceAtLeast(0L)).coerceAtLeast(0L)
-        val deadline = addSaturated(runningSince, remainingAtResume)
-        val subjectName = snapshot.subjects.firstOrNull { it.id == timer.subjectId }?.name.orEmpty()
-        return TrackedCountdown(
-            key = completionKey(timerId, timer.phase, startedAt),
-            timerId = timerId,
-            phase = timer.phase,
-            subjectName = subjectName,
-            startedAtEpochMs = startedAt,
-            deadlineEpochMs = deadline,
-            targetSeconds = timer.targetSeconds,
-        )
-    }
-
     private data class ConnectionIdentity(val baseUrl: String, val token: String)
-
-    private data class TrackedCountdown(
-        val key: String,
-        val timerId: String,
-        val phase: TimerPhase,
-        val subjectName: String,
-        val startedAtEpochMs: Long,
-        val deadlineEpochMs: Long,
-        val targetSeconds: Int,
-    )
 
     private companion object {
         const val MAX_DELIVERED_KEYS = 64
-
-        fun completionKey(timerId: String, phase: TimerPhase, startedAtEpochMs: Long): String =
-            "$timerId|${phase.name}|$startedAtEpochMs"
-
-        fun addSaturated(left: Long, right: Long): Long =
-            if (right > 0L && left > Long.MAX_VALUE - right) Long.MAX_VALUE else left + right
     }
 }
