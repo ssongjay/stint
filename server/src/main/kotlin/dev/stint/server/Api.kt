@@ -60,7 +60,9 @@ internal class EventHub(initial: Snapshot) {
 
     fun publish(snapshot: Snapshot) {
         snapshots.update { current ->
-            if (snapshot.revision >= current.revision) snapshot else current
+            val candidateIsNewer = snapshot.revision > current.revision ||
+                (snapshot.revision == current.revision && snapshot.serverNowEpochMs >= current.serverNowEpochMs)
+            if (candidateIsNewer) snapshot else current
         }
     }
 
@@ -194,14 +196,30 @@ internal fun Application.stintModule(
     val ticker: Job = launch {
         while (isActive) {
             delay(1_000)
-            runCatching { withContext(Dispatchers.IO) { repository.settleExpired() } }
-                .onSuccess { result -> result?.let { events.publish(it.snapshot) } }
-                .onFailure { error -> appLog.error("Timer settlement failed", error) }
+            runTimerSettlement(
+                settle = { withContext(Dispatchers.IO) { repository.settleExpired() } },
+                publish = events::publish,
+                onFailure = { error -> appLog.error("Timer settlement failed", error) },
+            )
         }
     }
     monitor.subscribe(ApplicationStopped) {
         ticker.cancel()
         database.close()
+    }
+}
+
+internal suspend fun runTimerSettlement(
+    settle: suspend () -> MutationResult?,
+    publish: (Snapshot) -> Unit,
+    onFailure: (Exception) -> Unit,
+) {
+    try {
+        settle()?.let { publish(it.snapshot) }
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Exception) {
+        onFailure(error)
     }
 }
 

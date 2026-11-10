@@ -26,4 +26,15 @@ class EventHubTest {
         events.publish(Snapshot(serverNowEpochMs = 3, revision = 11))
         assertEquals(11, events.current.revision)
     }
+
+    @Test
+    fun `an older refresh at the same revision cannot move websocket time backwards`() {
+        val events = EventHub(Snapshot(serverNowEpochMs = 1, revision = 10))
+
+        events.publish(Snapshot(serverNowEpochMs = 3, revision = 10))
+        events.publish(Snapshot(serverNowEpochMs = 2, revision = 10))
+
+        assertEquals(10, events.current.revision)
+        assertEquals(3, events.current.serverNowEpochMs)
+    }
 }
