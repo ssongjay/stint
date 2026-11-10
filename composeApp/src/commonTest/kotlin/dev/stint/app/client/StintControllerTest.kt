@@ -16,6 +16,7 @@ import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.plugins.api.createClientPlugin
 import io.ktor.client.request.HttpRequestData
 import io.ktor.client.request.HttpResponseData
 import io.ktor.http.ContentType
@@ -28,6 +29,7 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -40,6 +42,46 @@ import kotlin.test.assertTrue
 
 class StintControllerTest {
     private val json = Json { ignoreUnknownKeys = true }
+
+    @Test
+    fun `cancelling error body decoding does not become a user facing failure`() = runBlocking {
+        for (status in listOf(HttpStatusCode.BadRequest, HttpStatusCode.InternalServerError)) {
+            val initial = snapshot(serverNow = 1_000L, revision = 1, status = TimerStatus.RUNNING)
+            val decoding = CompletableDeferred<Unit>()
+            val cancelErrorBody = createClientPlugin("CancelErrorBody") {
+                transformResponseBody { _, _, requestedType ->
+                    if (requestedType.type == ApiError::class) {
+                        decoding.complete(Unit)
+                        throw CancellationException("error body decoding cancelled")
+                    }
+                    null
+                }
+            }
+            val http = HttpClient(MockEngine { request ->
+                if (request.url.encodedPath.endsWith("/timer/commands")) {
+                    // No content type: leave this response to the injected error-body decoder.
+                    respond("cancelled body", status)
+                } else jsonResponse(initial)
+            }) {
+                expectSuccess = false
+                install(ContentNegotiation) { json(json) }
+                install(cancelErrorBody)
+            }
+            val controller = StintController(http, FakeStore(settings(), initial), { 1_000L }, { "cancelled-command" },
+                realtimeEnabled = false)
+            try {
+                withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+                controller.pause()
+                withTimeout(2_000) { decoding.await() }
+                val settled = withTimeout(2_000) { controller.state.first { !it.working } }
+                assertNull(settled.message, "Cancellation must not become a $status error message")
+                assertEquals(ConnectionStatus.CONNECTED, settled.connection)
+                assertEquals(initial, settled.snapshot)
+            } finally {
+                controller.close()
+            }
+        }
+    }
 
     @Test
     fun `snapshot aligns the local clock to server time`() = runBlocking {

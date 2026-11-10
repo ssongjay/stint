@@ -390,14 +390,23 @@ class StintController(
             throw RevisionConflict(error.snapshot)
         }
         if (response.status == HttpStatusCode.BadRequest) {
-            val message = runCatching { response.body<ApiError>().message }.getOrDefault("변경 내용을 확인해 주세요.")
+            val message = response.errorMessageOr("변경 내용을 확인해 주세요.")
             throw ClientRejected(message)
         }
         if (!response.status.isSuccess()) {
-            val message = runCatching { response.body<ApiError>().message }.getOrDefault("서버 요청이 실패했어요.")
+            val message = response.errorMessageOr("서버 요청이 실패했어요.")
             throw RemoteFailure(message)
         }
         return response.body()
+    }
+
+    private suspend fun HttpResponse.errorMessageOr(fallback: String): String = try {
+        body<ApiError>().message
+    } catch (cancelled: CancellationException) {
+        // 요청 취소는 사용자에게 보여 줄 서버 오류가 아니라 코루틴의 종료 신호다.
+        throw cancelled
+    } catch (_: Exception) {
+        fallback
     }
 
     /**
