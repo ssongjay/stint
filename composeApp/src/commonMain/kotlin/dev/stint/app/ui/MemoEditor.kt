@@ -83,6 +83,10 @@ internal fun memoEditorChoices(
 internal fun memoWithCursorAtEnd(value: String): TextFieldValue =
     TextFieldValue(value, selection = TextRange(value.length))
 
+/**
+ * 회고 초안과 최근 선택 목록만 관리한다. 추천을 고르는 동작은 초안에만 반영하고,
+ * 실제 서버 저장은 사용자가 저장 버튼을 눌렀을 때 onSave를 통해 상위 화면에 맡긴다.
+ */
 @Composable
 internal fun MemoEditor(
     sessionId: String,
@@ -115,6 +119,7 @@ internal fun MemoEditor(
         if (recentExpanded && enabled) focusRequester.requestFocus()
     }
 
+    // TextFieldValue에 커서 위치까지 담아야 추천을 넣은 직후 문장 끝에서 이어 쓸 수 있다.
     fun choose(value: String) {
         memo = memoWithCursorAtEnd(value.take(MEMO_LIMIT))
         recentExpanded = false
@@ -139,6 +144,7 @@ internal fun MemoEditor(
                 .focusRequester(focusRequester)
                 .onFocusChanged { fieldFocused = it.isFocused }
                 .onPreviewKeyEvent { event ->
+                    // 한글 조합 중인 방향키·Enter를 추천 선택으로 가로채지 않는다.
                     if (!enabled || !fieldFocused || event.type != KeyEventType.KeyDown ||
                         memo.composition?.collapsed == false
                     ) return@onPreviewKeyEvent false
@@ -182,6 +188,7 @@ internal fun MemoEditor(
                 }
             },
             enabled = enabled,
+            // 모바일 키보드의 완료 동작은 KeyEvent 대신 IME 콜백으로 올 수도 있다.
             keyboardOptions = KeyboardOptions(imeAction = if (recentExpanded) ImeAction.Done else ImeAction.Default),
             keyboardActions = KeyboardActions(onDone = {
                 if (recentExpanded) suggestions.getOrNull(highlighted)?.let(::choose)

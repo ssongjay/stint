@@ -13,6 +13,7 @@ fun main() {
                 host = config.host
                 port = config.port
             })
+            // 개인용 소형 서버의 자원 상한을 예측 가능하게 유지하는 보수적인 Netty 풀 크기다.
             connectionGroupSize = 1
             workerGroupSize = 2
             callGroupSize = 2

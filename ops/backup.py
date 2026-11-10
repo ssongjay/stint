@@ -22,6 +22,7 @@ def main():
     command = ["mysqldump", "--no-defaults", "--protocol=socket", "--user=root",
                "--single-transaction", "--quick", "--no-tablespaces",
                "--set-gtid-purged=OFF", "--databases", "stint"]
+    # 덤프 전체를 메모리에 올리지 않고 조금씩 압축해 작은 서버의 메모리 사용을 제한한다.
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         with gzip.open(temporary, "wb", compresslevel=6) as output:
@@ -31,6 +32,7 @@ def main():
         if process.wait() != 0:
             raise RuntimeError("Stint database dump failed: " + error[:400])
         temporary.chmod(0o600)
+        # 완성된 덤프만 최종 이름으로 보이게 하여 중간 파일을 정상 백업으로 오인하지 않게 한다.
         temporary.replace(final)
     except BaseException:
         process.kill()

@@ -40,6 +40,7 @@ internal object AndroidReleasePolicy {
     private val sha256Digest = Regex("sha256:([0-9a-fA-F]{64})")
 
     fun latestValidRelease(metadata: String): AndroidRelease? {
+        // 공개 API 결과도 입력 데이터다. 크기와 형식을 제한한 뒤 계약을 모두 만족한 릴리스만 고른다.
         require(metadata.encodeToByteArray().size <= METADATA_LIMIT_BYTES) { "업데이트 정보가 너무 커요." }
         val releases = runCatching { Json.parseToJsonElement(metadata).jsonArray }.getOrNull()
             ?: throw IllegalArgumentException("업데이트 정보 형식이 올바르지 않아요.")
@@ -82,6 +83,7 @@ internal object AndroidReleasePolicy {
             ?.let { sha256Digest.matchEntire(it)?.groupValues?.get(1)?.lowercase() }
             ?: return null
         val release = AndroidRelease(versionCode, versionName, url, digest)
+        // digest는 여기서 배포 메타데이터 계약을 증명한다. 브라우저가 받은 APK 바이트는 앱이 직접 검증하지 않는다.
         return release.takeIf { size in 1L..APK_LIMIT_BYTES && isCanonical(it) }
     }
 }

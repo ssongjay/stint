@@ -24,6 +24,10 @@ class Database(private val config: ServerConfig) : AutoCloseable {
         }
     }.getOrDefault(false)
 
+    /**
+     * 반복 실행 가능한 스키마 보강 뒤 초기 데이터를 이관한다.
+     * MySQL DDL은 암묵적으로 커밋되므로 아래 rollback이 CREATE/ALTER까지 되돌리지는 않는다.
+     */
     fun migrate() {
         connection().use { connection ->
             connection.autoCommit = false
@@ -108,7 +112,7 @@ class Database(private val config: ServerConfig) : AutoCloseable {
         }
     }
 
-    /** Import at most five legacy memos once; subsequent migrations preserve write-order history. */
+    /** 최초 한 번만 기존 회고 최대 5개를 가져오며, 이후 실행에서는 실제 사용 순서를 보존한다. */
     private fun seedRecentMemos(connection: Connection) {
         val hasHistory = connection.createStatement().use { statement ->
             statement.executeQuery("SELECT 1 FROM recent_memos LIMIT 1").use { it.next() }

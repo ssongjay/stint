@@ -41,6 +41,7 @@ class CompletionAlarmReceiver : BroadcastReceiver() {
         val tracker = TimerCompletionTracker(store.deliveredKeys(arm.identityHash))
         tracker.update(arm.baselineState(settings))
         val before = controller.state.value.snapshot
+        // 예약 시점 뒤에 다른 기기에서 일시정지했을 수 있으므로 알림 직전에 서버 상태를 다시 확인한다.
         controller.refresh()
         val fresh = withTimeoutOrNull(9_000L) {
             controller.state.first { state ->

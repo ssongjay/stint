@@ -56,6 +56,7 @@ class DesktopLocalStore internal constructor(
         if (!Files.isRegularFile(cacheFile)) return null
         return runCatching {
             val cached = json.decodeFromString<CachedSnapshot>(Files.readString(cacheFile))
+            // 서버 주소나 연결 키가 바뀌면 이전 계정의 화면을 잠깐이라도 보여주지 않는다.
             cached.snapshot.takeIf { cached.identity == settings.identityHash() }
         }.getOrNull()
     }
@@ -72,6 +73,7 @@ class DesktopLocalStore internal constructor(
                 StandardOpenOption.TRUNCATE_EXISTING,
             )
             runCatching {
+                // 중간까지 쓴 JSON을 다음 실행이 읽지 않도록 임시 파일을 완성한 뒤 한 번에 교체한다.
                 Files.move(
                     temporary,
                     cacheFile,
@@ -95,6 +97,7 @@ class DesktopLocalStore internal constructor(
     }
 
     private fun keychainAccount(baseUrl: String): String =
+        // 연결 키 자체는 Preferences나 파일 이름에 남기지 않고 macOS Keychain에서만 읽는다.
         if (baseUrl.isBlank()) "" else "connection-${baseUrl.sha256().take(24)}"
 
     private fun ConnectionSettings.identityHash(): String {

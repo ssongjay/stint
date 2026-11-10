@@ -92,6 +92,7 @@ fun StintApp(
     onSelectSubject: ((String) -> Unit)? = null,
     appSettingsContent: (@Composable () -> Unit)? = null,
 ) {
+    // Compose 화면의 유일한 서버 상태 입력. 재구성은 이 StateFlow 변화에서 시작한다.
     val state by controller.state.collectAsState()
 
     WorkbenchTheme {
@@ -122,6 +123,7 @@ private fun Workbench(
     onSelectSubject: ((String) -> Unit)?,
     appSettingsContent: (@Composable () -> Unit)?,
 ) {
+    // 탭·열린 패널·주제 선택은 화면 탐색 상태이며 서버 도메인 상태와 분리해 둔다.
     var tabName by rememberSaveable { mutableStateOf(MainTab.FOCUS.name) }
     var panelName by rememberSaveable { mutableStateOf(SidePanel.NONE.name) }
     var localSelectedSubjectId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -141,6 +143,7 @@ private fun Workbench(
     val selectSubject: (String) -> Unit = { id ->
         if (onSelectSubject != null) onSelectSubject(id) else localSelectedSubjectId = id
     }
+    // 서버 시각을 받은 뒤에는 단조 시계로 보간해 네트워크 요청 없이 숫자를 갱신한다.
     LaunchedEffect(state.serverNowEpochMs) {
         val base = state.serverNowEpochMs
         val mark = TimeSource.Monotonic.markNow()
@@ -151,6 +154,7 @@ private fun Workbench(
     }
 
     BoxWithConstraints(Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)) {
+        // 동일한 상태와 동작을 유지한 채 배치만 넓은 작업대/단일 열로 갈라진다.
         val wide = maxWidth >= 840.dp
         Column(Modifier.fillMaxSize()) {
             WorkbenchHeader(

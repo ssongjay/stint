@@ -32,6 +32,7 @@ def binaries():
 
 
 def configuration():
+    # 개발 접속 값은 무시되는 로컬 파일에만 둔다. 운영 서버의 설정 파일을 읽지 않는다.
     LOCAL.mkdir(mode=0o700, exist_ok=True)
     LOCAL.chmod(0o700)
     if CONFIG.exists():
@@ -107,6 +108,7 @@ GRANT ALL PRIVILEGES ON stint_test.* TO 'stint'@'127.0.0.1';
 
 
 def stop():
+    # 이 도구가 만든 전용 소켓으로만 종료한다. Mac의 다른 MySQL 인스턴스에는 연결하지 않는다.
     client, _ = binaries()
     if not SOCKET.exists():
         print("Private MySQL is not running.")

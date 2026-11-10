@@ -128,6 +128,7 @@ internal class DesktopCompletionNotifications(
 }
 
 internal fun desktopCompletionPlan(state: ClientState): DesktopCompletionPlan? {
+    // OS 예약 알림은 로컬 추측이 아니라 서버가 확정한 실행 상태와 서버 시각으로만 만든다.
     if (state.connection != ConnectionStatus.CONNECTED || state.working) return null
     val snapshot = state.snapshot ?: return null
     val timer = snapshot.timer
@@ -204,6 +205,7 @@ private class NativeDesktopNotificationBridge : DesktopNotificationBridge {
     }
 
     private suspend fun command(json: String): String? {
+        // Compose/JVM에는 macOS 알림 예약 API가 없어, 작은 JNI 경계만 네이티브 구현으로 넘긴다.
         if (!available) return UNAVAILABLE_RESPONSE
         return withContext(Dispatchers.IO) {
             runCatching { nativeCommand(json) }.getOrDefault(UNAVAILABLE_RESPONSE)

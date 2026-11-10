@@ -24,6 +24,7 @@ data class ClientState(
     val clockStyle: TimerClockStyle = TimerClockStyle.ORBIT,
 )
 
+/** 플랫폼 UI가 서버 동기화 구현을 직접 알지 않도록 사용자 명령과 관찰 상태만 노출하는 경계다. */
 interface ClientController {
     val state: StateFlow<ClientState>
     fun configure(baseUrl: String, token: String)
@@ -42,6 +43,7 @@ interface ClientController {
     fun close()
 }
 
+/** 서버 스냅샷과 기기 전용 설정의 저장 위치를 Android와 macOS가 각자 구현하는 경계다. */
 interface LocalStore {
     fun loadSettings(): ConnectionSettings
     fun saveSettings(settings: ConnectionSettings)

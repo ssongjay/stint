@@ -76,6 +76,7 @@ internal class AndroidAppUpdater(
             return
         }
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(release.downloadUrl)).apply {
+            // 앱은 설치 권한을 갖지 않는다. 검증한 정식 URL만 브라우저로 넘기고 설치 확인은 Android에 맡긴다.
             addCategory(Intent.CATEGORY_BROWSABLE)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }

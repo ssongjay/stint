@@ -29,6 +29,22 @@ Compose Multiplatform 화면과 Ktor/MySQL 서버를 사용하며 iCloud에 의�
 서버의 revision과 명령 id로 동시 조작·재전송을 처리하고, 연결이 끊기면
 저장된 타이머와 기록을 보여준다. 오프라인 조작은 재연결 후에 허용한다.
 
+## 코드 읽는 순서
+
+`집중 시작`이 다른 기기에 반영되는 흐름부터 따라가면 각 모듈의 책임을 볼 수 있다.
+
+1. `shared/.../Models.kt`, `ClientContract.kt`: 주제·타이머·기록의 형태와 화면의 명령 계약.
+2. `composeApp/src/commonMain/.../ui/FocusTab.kt`: 버튼이 컨트롤러에 전달하는 사용자 의도.
+3. `composeApp/src/commonMain/.../client/StintController.kt`: 명령 전송, 상태 수신, 재연결과 캐시.
+4. `server/.../Api.kt`, `Repository.kt`, `TimerEngine.kt`: 인증, 트랜잭션, 상태 전이와 변경 전달.
+5. `composeApp/src/commonMain/.../ui/StintApp.kt`: 수신한 상태를 시간에 맞춰 화면에 표시.
+
+그다음 시간 편집은 `TimeDial.kt`와 `TimeWheelDigits.kt`, 회고는 `MemoEditor.kt`와
+`MemoHistory.kt`를 읽는다. Mac 메뉴 막대·알림·저장소는 `desktopMain`, Android의
+접힘 자세·알림·업데이트·저장소는 `androidMain`에서 공통 코드와 만나는 지점을 찾는다.
+실행 규칙은 단위 테스트, 저장 경계는 MySQL 통합 테스트, 터치·키보드는 계측 테스트와
+함께 읽으면 각 코드가 보호하는 동작을 확인할 수 있다.
+
 타이머 오른쪽에서 **오빗 링 / 모래시계**를 고를 수 있다. 한 바퀴와 모래 전체는
 항상 60분 기준이며 숫자가 실제 남은 시간을 표시한다. 모양은 기기별로 저장하고
 타이머·기록은 서버로 동기화한다.

@@ -44,6 +44,7 @@ data class TimerState(
     val controllingDeviceName: String? = null,
 )
 
+/** 완료된 집중의 시간 기록이다. 진행 중인 [TimerState]와 구분하며 회고는 완료 후에도 편집할 수 있다. */
 @Serializable
 data class FocusSession(
     val id: String,
@@ -74,6 +75,10 @@ data class Snapshot(
     val recentMemos: List<String> = emptyList(),
 )
 
+/**
+ * 모든 변경 요청에 붙는 동시성 계약이다.
+ * commandId는 같은 요청의 재실행을 막고, expectedRevision은 다른 기기의 선행 변경을 덮어쓰지 않게 한다.
+ */
 @Serializable
 data class MutationContext(
     val commandId: String,
@@ -110,6 +115,7 @@ data class SaveMemoRequest(val context: MutationContext, val memo: String)
 @Serializable
 data class ApiError(val code: String, val message: String, val snapshot: Snapshot? = null)
 
+/** 저장된 누적 시간과 현재 실행 구간을 합친다. 서버 시각을 입력받아 기기 시계 차이를 계산에서 제외한다. */
 fun TimerState.elapsedMillis(serverNowEpochMs: Long): Long {
     val running = if (status == TimerStatus.RUNNING && runningSinceEpochMs != null)
         (serverNowEpochMs - runningSinceEpochMs).coerceAtLeast(0)

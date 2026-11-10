@@ -13,6 +13,10 @@ data class Settlement(
     val session: FocusSession? = null,
 )
 
+/**
+ * DB나 네트워크와 분리된 상태 전이 규칙이다.
+ * 기록 id가 필요한 경로의 newId까지 주입하면 시각과 식별자를 고정해 테스트할 수 있다.
+ */
 object TimerEngine {
     fun elapsedMillis(timer: TimerState, nowEpochMs: Long): Long {
         val runningSince = timer.runningSinceEpochMs
@@ -98,6 +102,7 @@ object TimerEngine {
         if (timer.status != TimerStatus.RUNNING || timer.mode != TimerMode.COUNTDOWN) return null
         val runningSince = timer.runningSinceEpochMs ?: return null
         val remainingMillis = timer.targetSeconds * 1000L - timer.accumulatedMillis
+        // 늦게 확인하더라도 실제 종료 시각은 확인한 현재가 아니라 원래 마감 시각이어야 한다.
         val deadline = runningSince + remainingMillis.coerceAtLeast(0)
         if (nowEpochMs < deadline) return null
 
@@ -116,6 +121,7 @@ object TimerEngine {
         } else {
             subject.shortBreakSeconds
         }
+        // 타이머 id를 기록 id로 재사용하면 같은 집중이 두 번 정산되어도 DB 기본 키가 중복 기록을 막는다.
         val session = FocusSession(
             id = timer.id ?: newId(),
             subjectId = subject.id,

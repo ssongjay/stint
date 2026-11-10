@@ -28,6 +28,7 @@ data class ServerConfig(
     }
 }
 
+/** 테스트가 시각을 고정할 수 있게 시스템 시계를 서버 규칙에서 분리한 경계다. */
 fun interface Clock {
     fun nowEpochMs(): Long
 }

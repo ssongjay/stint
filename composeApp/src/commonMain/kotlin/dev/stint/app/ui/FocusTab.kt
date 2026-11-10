@@ -442,8 +442,10 @@ private fun TimerReadout(
         ModeSwitch(selectedMode, onMode)
     }
     Spacer(Modifier.height(8.dp))
+    // 대기 중에는 주제 기본값, 시작 뒤에는 서버 타이머의 고정 목표를 읽는다.
     val target = if (status == TimerStatus.IDLE) subject?.focusSeconds ?: timer.targetSeconds else timer.targetSeconds
     val targetMillis = target.coerceAtLeast(0) * 1000L
+    // 서버에는 시작 시각과 누적값을 저장하고, 화면에서는 현재 시각으로 표시값을 계산한다.
     val reading = if (shownMode == TimerMode.STOPWATCH) {
         stopwatchClockReadingMillis(elapsed)
     } else {
@@ -701,6 +703,7 @@ internal fun TodayLedger(
     canEdit: Boolean = true,
     recentMemos: List<String> = emptyList(),
 ) {
+    // 기록과 회고는 서버 Snapshot의 일부다. 여기서는 오늘 범위만 골라 시간순 원장을 만든다.
     val today = localDate(nowEpochMs)
     val todaySessions = sessions.filter { it.localDay() == today }.sortedByDescending { it.startedAtEpochMs }
     val duration = todaySessions.sumOf { it.durationSeconds }

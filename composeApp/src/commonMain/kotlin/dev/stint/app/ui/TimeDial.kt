@@ -46,6 +46,7 @@ internal fun ClockTimeDial(
         timeContent: ClockTimeContent?,
     ) -> Unit,
 ) {
+    // preview는 손가락 움직임, pending은 서버 ACK 대기, valueSeconds는 확정된 서버 값이다.
     val hasRange = minimumSeconds <= maximumSeconds
     val windowFocused = LocalWindowInfo.current.isWindowFocused
     val dialEnabled = enabled && hasRange && windowFocused
@@ -83,6 +84,7 @@ internal fun ClockTimeDial(
         if (bounded == valueSeconds) {
             resetToAuthoritative()
         } else if (latestEnabled && latestCommit(bounded, key)) {
+            // 화면 값을 즉시 되돌리지 않고 ACK가 올 때까지 pending으로 고정한다.
             pendingSeconds = bounded
             pendingKey = key
             pendingSawBusy = busy
@@ -98,6 +100,7 @@ internal fun ClockTimeDial(
         if (pending == null) {
             previewSeconds = null
         } else if (valueSeconds == pending && !busy) {
+            // 정상 ACK는 같은 필드를 계속 조절할 수 있게 선택만 새 interactionKey로 승계한다.
             val preserveActivation = activationContext == activationContextKey && feedbackMessage == null
             resetToAuthoritative()
             if (preserveActivation) {
@@ -115,6 +118,7 @@ internal fun ClockTimeDial(
         }
     }
     LaunchedEffect(activationContextKey) {
+        // 같은 숫자여도 서버·주제·타이머 문맥이 달라지면 예전 포커스를 넘기지 않는다.
         if (activationContext != null && activationContext != activationContextKey) {
             activatedField = null
             activationKey = null

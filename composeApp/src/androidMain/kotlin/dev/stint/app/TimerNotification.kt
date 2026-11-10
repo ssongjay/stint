@@ -128,6 +128,7 @@ class TimerNotification(context: Context) {
     }
 
     private fun actionIntent(action: String, state: ClientState): PendingIntent? {
+        // 알림은 늦게 눌릴 수 있다. 타이머 id·revision·phase·status를 함께 넣어 낡은 버튼을 거부한다.
         val guard = notificationCommandGuard(state) ?: return null
         val data = Uri.Builder()
             .scheme("stint")

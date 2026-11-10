@@ -35,6 +35,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.collect
 
 class MainActivity : ComponentActivity() {
+    // 화면 회전·접힘 전환으로 Activity가 다시 만들어져도 Application의 컨트롤러는 그대로 쓴다.
     private val viewModel: StintViewModel by viewModels()
     private val controller get() = viewModel.controller
 
@@ -51,6 +52,7 @@ class MainActivity : ComponentActivity() {
         }
         val windowInfoTracker = WindowInfoTracker.getOrCreate(this)
         setContent {
+            // 폴더블 자세는 서버 상태가 아니라 현재 창의 물리 배치이므로 기기에서만 관찰한다.
             val foldPosture by produceState(FoldPosture(), windowInfoTracker) {
                 windowInfoTracker.windowLayoutInfo(this@MainActivity).collect { layoutInfo ->
                     value = layoutInfo.displayFeatures
@@ -90,6 +92,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startTimerStatus() {
+        // 진행 중 타이머가 없으면 foreground service를 띄우지 않아 상시 알림과 배터리 비용을 피한다.
         if (controller.state.value.snapshot?.timer?.status?.let { it != TimerStatus.IDLE } != true) return
         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
         if (TimerStatusService.running) return

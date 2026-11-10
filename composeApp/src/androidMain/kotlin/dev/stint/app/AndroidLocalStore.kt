@@ -70,6 +70,7 @@ class AndroidLocalStore(context: Context) : LocalStore {
         if (!cacheFile.isFile) return null
         return runCatching {
             val cached = json.decodeFromString<CachedSnapshot>(cacheFile.readText())
+            // 연결 대상이 바뀌면 예전 서버의 주제·기록 캐시는 사용하지 않는다.
             cached.snapshot.takeIf { cached.identity == settings.identityHash() }
         }.getOrNull()
     }
@@ -109,6 +110,7 @@ class AndroidLocalStore(context: Context) : LocalStore {
     }
 
     private fun encryptToken(token: String): String {
+        // Android Keystore의 기기 전용 키로 암호화하므로 설정 파일에는 평문 연결 키가 남지 않는다.
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
         val encrypted = cipher.doFinal(token.toByteArray(Charsets.UTF_8))

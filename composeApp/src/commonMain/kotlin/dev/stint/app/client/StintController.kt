@@ -53,6 +53,10 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlin.concurrent.Volatile
 
+/**
+ * 서버의 Snapshot을 앱의 단일 상태 흐름으로 바꾸는 동기화 경계다.
+ * 화면은 HTTP·WebSocket·로컬 저장소를 직접 다루지 않고 이 컨트롤러만 관찰한다.
+ */
 class StintController(
     private val client: HttpClient,
     private val localStore: LocalStore,
@@ -65,10 +69,12 @@ class StintController(
     private val ownedJob = if (externalScope == null) SupervisorJob() else null
     private val scope = externalScope ?: CoroutineScope(ownedJob!! + Dispatchers.Default)
     private val json = Json { ignoreUnknownKeys = true }
+    // 한 기기에서 보낸 명령 순서와 여러 통로로 도착한 Snapshot 적용 순서를 각각 직렬화한다.
     private val mutationMutex = Mutex()
     private val snapshotMutex = Mutex()
     private var syncJob: Job? = null
     private var tickerJob: Job? = null
+    // 연결 주소나 키가 바뀐 뒤 예전 연결의 늦은 응답이 새 계정 상태를 덮지 못하게 한다.
     @Volatile private var identityGeneration = 0L
     private var identityJob = SupervisorJob(scope.coroutineContext[Job])
     private var identityScope = CoroutineScope(scope.coroutineContext + identityJob)
@@ -97,6 +103,7 @@ class StintController(
 
     init {
         localStore.saveSettings(initialSettings)
+        // 서버에는 매 프레임 묻지 않는다. 마지막 서버 시각과 로컬 시계를 조합해 표시만 갱신한다.
         tickerJob = scope.launch {
             while (isActive) {
                 _state.update { it.copy(serverNowEpochMs = clock() + serverOffsetMs) }
@@ -126,6 +133,7 @@ class StintController(
                     _state.update { it.copy(message = "연결 키를 이 기기에 안전하게 저장하지 못했어요.") }
                     return@withLock
                 }
+                // 이전 identityScope 전체를 취소해야 진행 중 HTTP와 WebSocket도 함께 폐기된다.
                 identityGeneration += 1
                 identityJob.cancel()
                 identityJob = SupervisorJob(scope.coroutineContext[Job])
@@ -276,6 +284,7 @@ class StintController(
         )
     }
 
+    /** 연결된 최신 Snapshot을 기준으로 명령 문맥을 만들고, 서버가 돌려준 상태만 확정한다. */
     private fun launchMutation(
         guard: TimerMutationGuard? = null,
         block: suspend (ConnectionSettings, MutationContext) -> Snapshot,
@@ -302,6 +311,7 @@ class StintController(
                     }
                     return@withLock
                 }
+                // commandId는 재전송의 중복 실행을, revision은 다른 기기의 선행 변경을 막는다.
                 val context = MutationContext(
                     commandId = newId(),
                     expectedRevision = guard?.revision ?: snapshot.revision,
@@ -341,6 +351,7 @@ class StintController(
         }
     }
 
+    /** 타임아웃일 때만 같은 payload를 한 번 재전송한다. 서버의 commandId 멱등성이 전제다. */
     private suspend inline fun <reified T> mutate(
         settings: ConnectionSettings,
         path: String,
@@ -389,6 +400,10 @@ class StintController(
         return response.body()
     }
 
+    /**
+     * 현재 구현은 WebSocket 실시간 전달과 10초 HTTP 조회를 함께 사용한다.
+     * 조회는 누락 복구용 안전망이지만 정상 연결 중에도 전체 Snapshot을 읽는 비용이 있다.
+     */
     private fun restartSync() {
         syncJob?.cancel()
         if (!_state.value.settings.isComplete() || closed) return
@@ -399,6 +414,7 @@ class StintController(
                 fetchSnapshot(settings, generation, showConnecting = true)
                 return@launch
             }
+            // HTTP 경로: 최초 상태 확보와 WebSocket 누락 복구. 아직 연결 상태에 따라 멈추지는 않는다.
             launch {
                 fetchSnapshot(settings, generation, showConnecting = true)
                 while (isActive) {
@@ -406,6 +422,7 @@ class StintController(
                     fetchSnapshot(settings, generation, showConnecting = false)
                 }
             }
+            // WebSocket 경로: 변경이 생길 때 서버가 새 Snapshot을 즉시 밀어준다.
             launch {
                 var retryDelayMs = 1_000L
                 while (isActive) {
@@ -456,6 +473,7 @@ class StintController(
         }
     }
 
+    /** 어느 수신 통로든 revision과 서버 시각이 현재 상태보다 역행하는 Snapshot은 거부한다. */
     private suspend fun applySnapshot(snapshot: Snapshot, generation: Long): Boolean = snapshotMutex.withLock {
         if (generation != identityGeneration) return@withLock false
         val currentSnapshot = _state.value.snapshot
@@ -465,6 +483,7 @@ class StintController(
                     snapshot.serverNowEpochMs < currentSnapshot.serverNowEpochMs))
         ) return@withLock false
         val receivedAt = clock()
+        // 기기 시계가 조금 달라도 같은 남은 시간을 보이도록 서버-로컬 시각 차이를 기억한다.
         serverOffsetMs = snapshot.serverNowEpochMs - receivedAt
         lastSuccessAtMs = receivedAt
         runCatching { localStore.saveSnapshot(snapshot) }

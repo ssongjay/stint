@@ -53,6 +53,7 @@ internal class AndroidCompletionNotifications(context: Context) {
     }
 
     private fun reconcileAlarm(state: ClientState, identity: String) {
+        // AlarmManager는 앱 프로세스가 없어도 울릴 수 있어, 서버 deadline을 기기 monotonic 시각으로 옮겨 예약한다.
         val arm = completionAlarmArm(
             state,
             identity,

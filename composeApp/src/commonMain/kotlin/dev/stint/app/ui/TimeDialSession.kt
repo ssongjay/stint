@@ -35,8 +35,10 @@ internal fun timeDialSession(state: ClientState, subject: Subject?, selectedMode
     val minimum = 1
     val maximumRemaining = maximum - offset
     return TimeDialSession(
+        // revision이 바뀌면 진행 중 제스처가 오래된 상태에 저장되지 않도록 무효화한다.
         interactionKey = listOf(state.snapshot?.revision, subject?.id, timer.id, timer.status,
             timer.phase, mode, target).joinToString("|"),
+        // ACK의 revision 변화는 허용하되 실제 타이머 문맥 교체에는 선택을 해제한다.
         activationContextKey = listOf(
             state.settings.baseUrl,
             state.settings.token.hashCode(), // UI lifetime marker only; never an authorization decision.

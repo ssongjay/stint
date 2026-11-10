@@ -81,6 +81,7 @@ internal fun VerticalTimeWheelReadout(
     onGestureActive: (Boolean) -> Unit,
     onTick: () -> Unit,
 ) {
+    // 한 번에 한 필드만 제스처를 소유해 분·초가 동시에 움직이지 않게 한다.
     val values = splitTimeWheelSeconds(totalSeconds)
     val minuteMaximum = (maximumSeconds.coerceAtLeast(0) / 60).coerceAtLeast(0)
     val secondRange = timeWheelSecondRange(totalSeconds, minimumSeconds, maximumSeconds)
@@ -206,6 +207,7 @@ private fun VerticalTimeWheelField(
         if (!gestureActive) wheelValue = value.toFloat()
     }
     LaunchedEffect(deferredSettle, settleRevision, interactionKey) {
+        // 키보드·휠 입력의 연속 눈금은 240ms 동안 모아 마지막 값만 서버에 보낸다.
         val pending = deferredSettle ?: return@LaunchedEffect
         val revision = settleRevision
         delay(WHEEL_SETTLE_MILLIS)
@@ -225,6 +227,7 @@ private fun VerticalTimeWheelField(
     }
 
     suspend fun settle(release: ReleasedWheelGesture) {
+        // 손을 뗀 속도를 짧게 투영하고 정수 눈금에 맞춘 뒤 한 번만 저장한다.
         deferredSettle = null
         settleRevision++
         val motionScale = currentCoroutineContext()[MotionDurationScale]?.scaleFactor ?: 1f
@@ -324,6 +327,7 @@ private fun VerticalTimeWheelField(
             focusRequester.requestFocus()
         }
         .pointerInput(enabled, activated, interactionKey, minimum, maximum) {
+            // 클릭·포커스로 활성화되기 전에는 이벤트를 소비하지 않아 부모 화면이 스크롤된다.
             if (!enabled || !activated) return@pointerInput
             awaitPointerEventScope {
                 while (true) {

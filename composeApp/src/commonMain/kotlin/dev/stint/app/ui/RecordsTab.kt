@@ -65,6 +65,7 @@ internal fun RecordsTab(
     wide: Boolean,
     foldPosture: FoldPosture,
 ) {
+    // 기간·주제 필터는 보기 상태다. 원본 기록은 건드리지 않고 회고 저장만 서버 명령으로 보낸다.
     val snapshot = state.snapshot
     val subjects = snapshot?.subjects.orEmpty()
     var periodName by rememberSaveable { mutableStateOf(RecordPeriod.WEEK.name) }

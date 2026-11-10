@@ -33,6 +33,8 @@ fun main() {
     stintApplication()
 }
 private fun stintApplication() = application {
+    // 창과 메뉴 막대가 같은 컨트롤러를 봐야 명령 순서와 WebSocket 연결도 하나로 유지된다.
+    // remember는 Compose 재구성 때 이 장수명 객체가 중복 생성되는 것도 막는다.
     val controller = remember {
         StintController(
             client = desktopHttpClient(),
@@ -98,6 +100,7 @@ private fun stintApplication() = application {
     Window(
         visible = windowVisible,
         onCloseRequest = {
+            // 메뉴 막대가 있으면 창 닫기는 앱 종료가 아니다. 타이머와 종료 알림은 계속 살아 있어야 한다.
             if (menuBarAvailable) windowVisible = false else exitApplication()
         },
         title = "Stint",

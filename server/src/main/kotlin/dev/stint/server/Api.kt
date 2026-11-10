@@ -190,6 +190,7 @@ internal fun Application.stintModule(
         }
     }
 
+    // 앱이 모두 닫혀 있어도 자연 종료와 자동 휴식 전환은 서버가 책임진다.
     val ticker: Job = launch {
         while (isActive) {
             delay(1_000)
@@ -205,8 +206,8 @@ internal fun Application.stintModule(
 }
 
 /**
- * A StateFlow collector does not observe a WebSocket transport closing by itself. Keep the sender
- * as a child of the close watcher so every graceful close and transport failure releases its slot.
+ * StateFlow 구독은 전송 연결의 종료를 스스로 알지 못한다. 전송 작업을 연결 감시의 자식으로 두고,
+ * 정상 종료와 통신 실패 모두에서 취소·종료를 기다려 끊긴 기기의 구독이 메모리에 남지 않게 한다.
  */
 private suspend fun DefaultWebSocketServerSession.streamEventsUntilClosed(
     events: EventHub,

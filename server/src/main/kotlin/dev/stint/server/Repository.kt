@@ -26,11 +26,13 @@ class RevisionConflictException(
 
 data class MutationResult(val snapshot: Snapshot, val changed: Boolean)
 
+/** MySQL 트랜잭션 안에서 상태 전이, 기록, revision, 명령 receipt를 한 번에 확정하는 저장 경계다. */
 class StintRepository(
     private val database: Database,
     private val clock: Clock = SystemClock,
 ) {
     fun snapshot(): Snapshot = database.connection().use { connection ->
+        // 한 스냅샷의 여러 SELECT가 서로 다른 시점을 보지 않도록 같은 읽기 트랜잭션으로 묶는다.
         connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
         connection.isReadOnly = true
         connection.autoCommit = false
@@ -191,18 +193,24 @@ class StintRepository(
         }
     }
 
+    /**
+     * 같은 commandId는 재실행하지 않고, 최신 revision을 본 요청만 변경한다.
+     * 도메인 변경과 receipt 저장을 같은 커밋에 넣어 응답 유실 후 재시도도 안전하게 만든다.
+     */
     private fun mutate(context: MutationContext, change: (Connection, Long, Long) -> Unit): MutationResult {
         validateContext(context)
         return database.connection().use { connection ->
             connection.autoCommit = false
             try {
                 val currentRevision = lockRevision(connection)
+                // receipt를 revision보다 먼저 확인해야 이미 성공한 요청의 네트워크 재시도가 충돌로 오인되지 않는다.
                 if (isProcessed(connection, context.commandId)) {
                     val current = snapshot(connection, clock.nowEpochMs())
                     connection.commit()
                     return@use MutationResult(current, changed = false)
                 }
                 val now = clock.nowEpochMs()
+                // 명령 직전에 만료를 먼저 확정해 이미 끝난 타이머에 PAUSE 같은 오래된 동작이 적용되지 않게 한다.
                 val settlement = settleLocked(connection, now)
                 val effectiveRevision = currentRevision + if (settlement == null) 0 else 1
                 if (settlement != null) setRevision(connection, effectiveRevision)
