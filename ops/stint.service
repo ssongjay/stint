@@ -1,7 +1,8 @@
 [Unit]
 Description=Stint personal focus sync server
 After=network.target mysql.service
-Requires=mysql.service
+# Start MySQL at boot without stopping Stint during a MySQL package upgrade.
+Wants=mysql.service
 StartLimitIntervalSec=120
 StartLimitBurst=3
 
