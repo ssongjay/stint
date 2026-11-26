@@ -22,6 +22,15 @@ data class ClientState(
     val working: Boolean = false,
     val message: String? = null,
     val clockStyle: TimerClockStyle = TimerClockStyle.ORBIT,
+    val planning: PlanningState = PlanningState(),
+)
+
+data class PlanningState(
+    val date: String? = null,
+    val day: DayPlan? = null,
+    val loading: Boolean = false,
+    val saving: Boolean = false,
+    val error: String? = null,
 )
 
 /** 플랫폼 UI가 서버 동기화 구현을 직접 알지 않도록 사용자 명령과 관찰 상태만 노출하는 경계다. */
@@ -37,6 +46,9 @@ interface ClientController {
     fun setSubjectFocusDuration(subjectId: String, targetSeconds: Int, expectedRevision: Long)
     fun saveSubject(subject: Subject)
     fun saveMemo(sessionId: String, memo: String)
+    fun selectPlanDate(date: String?)
+    fun saveHourPlan(date: String, hour: Int, plan: HourPlan?, expectedPlanRevision: Long)
+    fun savePlanDefault(cycle: PlanCycle, expectedPlanRevision: Long)
     fun refresh()
     fun dismissMessage()
     fun setClockStyle(style: TimerClockStyle)

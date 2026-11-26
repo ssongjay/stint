@@ -100,8 +100,8 @@ android {
         applicationId = "dev.stint.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.12.0"
+        versionCode = 17
+        versionName = "1.13.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     sourceSets.getByName("debug") {
@@ -126,7 +126,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Dmg)
             packageName = "Stint"
-            packageVersion = "1.11.0"
+            packageVersion = "1.12.0"
             appResourcesRootDir.set(layout.buildDirectory.dir("generated/appResources"))
             modules("java.net.http", "jdk.crypto.ec")
             macOS {

@@ -5,9 +5,15 @@ import dev.stint.shared.ClientController
 import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.ConnectionStatus
+import dev.stint.shared.DayPlan
+import dev.stint.shared.HourPlan
 import dev.stint.shared.LocalStore
 import dev.stint.shared.MutationContext
+import dev.stint.shared.PlanCycle
+import dev.stint.shared.PlanningState
 import dev.stint.shared.SaveMemoRequest
+import dev.stint.shared.SaveHourPlanRequest
+import dev.stint.shared.SavePlanDefaultRequest
 import dev.stint.shared.SaveSubjectRequest
 import dev.stint.shared.Snapshot
 import dev.stint.shared.Subject
@@ -50,6 +56,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.datetime.LocalDate
 import kotlinx.serialization.json.Json
 import kotlin.concurrent.Volatile
 
@@ -73,6 +80,7 @@ class StintController(
     private val mutationMutex = Mutex()
     private val snapshotMutex = Mutex()
     private var syncJob: Job? = null
+    private var planJob: Job? = null
     private var tickerJob: Job? = null
     // 연결 주소나 키가 바뀐 뒤 예전 연결의 늦은 응답이 새 계정 상태를 덮지 못하게 한다.
     @Volatile private var identityGeneration = 0L
@@ -81,6 +89,8 @@ class StintController(
     @Volatile private var closed = false
     @Volatile private var serverOffsetMs = 0L
     @Volatile private var lastSuccessAtMs = 0L
+    @Volatile private var planRequestId: String? = null
+    @Volatile private var planFollowUpRevision: Long? = null
 
     private val initialSettings = localStore.loadSettings().ensureDevice(newId)
     private val initialValidation = if (initialSettings.isComplete()) {
@@ -139,6 +149,9 @@ class StintController(
                 identityJob = SupervisorJob(scope.coroutineContext[Job])
                 identityScope = CoroutineScope(scope.coroutineContext + identityJob)
                 lastSuccessAtMs = 0L
+                planJob = null
+                planRequestId = null
+                planFollowUpRevision = null
                 val cached = if (identityChanged) localStore.loadSnapshot() else _state.value.snapshot
                 _state.update {
                     it.copy(
@@ -147,6 +160,7 @@ class StintController(
                         serverNowEpochMs = cached?.serverNowEpochMs ?: clock(),
                         connection = ConnectionStatus.CONNECTING,
                         message = null,
+                        planning = it.planning.copy(day = null, loading = false, saving = false, error = null),
                     )
                 }
                 restartSync()
@@ -237,11 +251,63 @@ class StintController(
         mutate(settings, "/v1/sessions/$sessionId/memo", SaveMemoRequest(context, memo), HttpMethod.PUT)
     }
 
+    override fun selectPlanDate(date: String?) {
+        if (closed) return
+        if (date == null) {
+            planJob?.cancel()
+            planJob = null
+            planRequestId = null
+            _state.update { it.copy(planning = PlanningState()) }
+            return
+        }
+        if (!date.isCanonicalPlanDate()) {
+            _state.update { it.copy(planning = PlanningState(date = date, error = "올바른 날짜를 선택해 주세요.")) }
+            return
+        }
+        val current = _state.value.planning
+        if (current.date != date) planFollowUpRevision = null
+        if (current.date == date && current.loading) return
+        if (current.date == date && current.day != null && current.error == null) return
+        requestPlan(date, identityGeneration)
+    }
+
+    override fun saveHourPlan(date: String, hour: Int, plan: HourPlan?, expectedPlanRevision: Long) {
+        if (!date.isCanonicalPlanDate() || hour !in 0..23 || plan?.hour?.let { it != hour } == true) {
+            setPlanningError("계획 시간을 다시 확인해 주세요.")
+            return
+        }
+        launchPlanMutation(date, expectedPlanRevision) { settings, context ->
+            mutate(
+                settings,
+                "/v1/plans/$date/hours/$hour",
+                SaveHourPlanRequest(context, expectedPlanRevision, plan),
+                HttpMethod.PUT,
+            )
+        }
+    }
+
+    override fun savePlanDefault(cycle: PlanCycle, expectedPlanRevision: Long) {
+        val date = _state.value.planning.date
+        if (date == null) {
+            setPlanningError("먼저 계획 날짜를 선택해 주세요.")
+            return
+        }
+        launchPlanMutation(date, expectedPlanRevision) { settings, context ->
+            mutate(
+                settings,
+                "/v1/plans/default",
+                SavePlanDefaultRequest(context, expectedPlanRevision, cycle),
+                HttpMethod.PUT,
+            )
+        }
+    }
+
     override fun refresh() {
         if (closed || !_state.value.settings.isComplete()) return
         val settings = _state.value.settings
         val generation = identityGeneration
         identityScope.launch { fetchSnapshot(settings, generation, showConnecting = true) }
+        _state.value.planning.takeIf { !it.saving }?.date?.let { requestPlan(it, generation, force = true) }
     }
 
     override fun dismissMessage() {
@@ -262,6 +328,7 @@ class StintController(
         if (closed) return
         closed = true
         syncJob?.cancel()
+        planJob?.cancel()
         identityJob.cancel()
         tickerJob?.cancel()
         ownedJob?.cancel()
@@ -346,6 +413,99 @@ class StintController(
                     markOffline(generation, "변경 내용을 전송하지 못했어요. 서버 상태를 확인해 주세요.")
                 } finally {
                     if (generation == identityGeneration) _state.update { it.copy(working = false) }
+                }
+            }
+        }
+    }
+
+    private fun launchPlanMutation(
+        date: String,
+        expectedPlanRevision: Long,
+        block: suspend (ConnectionSettings, MutationContext) -> Snapshot,
+    ) {
+        if (closed) return
+        val invoked = _state.value
+        val planning = invoked.planning
+        if (invoked.connection != ConnectionStatus.CONNECTED) {
+            setPlanningError("연결이 복구된 뒤 다시 시도해 주세요.")
+            return
+        }
+        if (planning.date != date) {
+            setPlanningError("선택한 날짜가 바뀌어 저장하지 않았어요.")
+            return
+        }
+        if (planning.day?.revision != expectedPlanRevision || planning.saving) {
+            setPlanningError("다른 기기에서 계획이 변경됐어요. 최신 계획을 다시 불러와 주세요.")
+            requestPlan(date, identityGeneration, force = true)
+            return
+        }
+        val settings = invoked.settings
+        val generation = identityGeneration
+        identityScope.launch {
+            mutationMutex.withLock {
+                if (generation != identityGeneration) return@withLock
+                val current = _state.value
+                val snapshot = current.snapshot ?: return@withLock
+                val currentPlan = current.planning
+                if (currentPlan.date != date) return@withLock
+                if (currentPlan.day?.revision != expectedPlanRevision) {
+                    setPlanningError("다른 기기에서 계획이 변경됐어요. 최신 계획을 다시 불러왔어요.")
+                    requestPlan(date, generation, force = true)
+                    return@withLock
+                }
+                planJob?.cancel()
+                planJob = null
+                planRequestId = null
+                val context = MutationContext(
+                    commandId = newId(),
+                    expectedRevision = snapshot.revision,
+                    deviceId = settings.deviceId,
+                    deviceName = settings.deviceName,
+                )
+                _state.update {
+                    it.copy(
+                        working = true,
+                        message = null,
+                        planning = it.planning.copy(saving = true, loading = false, error = null),
+                    )
+                }
+                try {
+                    applySnapshot(block(settings, context), generation)
+                    if (_state.value.planning.date == date) {
+                        fetchPlan(date, settings, generation, newPlanRequest(date), saving = true)
+                    }
+                } catch (conflict: RevisionConflict) {
+                    conflict.snapshot?.let { applySnapshot(it, generation) }
+                    if (generation == identityGeneration && _state.value.planning.date == date) {
+                        _state.update {
+                            it.copy(
+                                message = "다른 기기에서 계획이 변경됐어요. 최신 계획을 불러왔습니다.",
+                                planning = it.planning.copy(saving = false),
+                            )
+                        }
+                        requestPlan(date, generation, force = true)
+                    }
+                } catch (failure: ClientRejected) {
+                    if (generation == identityGeneration && _state.value.planning.date == date) {
+                        _state.update { it.copy(planning = it.planning.copy(saving = false, error = failure.message)) }
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    if (generation == identityGeneration && _state.value.planning.date == date) {
+                        _state.update { it.copy(planning = it.planning.copy(saving = false, error = "계획을 저장하지 못했어요. 연결을 확인해 주세요.")) }
+                    }
+                    markOffline(generation)
+                } finally {
+                    if (generation == identityGeneration) {
+                        _state.update {
+                            val selected = it.planning.date == date
+                            it.copy(
+                                working = false,
+                                planning = if (selected) it.planning.copy(saving = false) else it.planning,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -482,6 +642,78 @@ class StintController(
         }
     }
 
+    private fun requestPlan(date: String, generation: Long, force: Boolean = false) {
+        if (generation != identityGeneration || closed || !_state.value.settings.isComplete()) return
+        val current = _state.value.planning
+        if (current.date == date && current.saving) return
+        if (!force && current.date == date && current.loading) return
+        planJob?.cancel()
+        val requestId = newPlanRequest(date)
+        _state.update {
+            val day = it.planning.day?.takeIf { loaded -> loaded.date == date }
+            it.copy(planning = PlanningState(date = date, day = day, loading = true, saving = false, error = null))
+        }
+        val settings = _state.value.settings
+        planJob = identityScope.launch { fetchPlan(date, settings, generation, requestId) }
+    }
+
+    private fun newPlanRequest(date: String): String = "$date:${newId()}".also { planRequestId = it }
+
+    private suspend fun fetchPlan(
+        date: String,
+        settings: ConnectionSettings,
+        generation: Long,
+        requestId: String,
+        saving: Boolean = false,
+    ): Boolean {
+        if (!planRequestMatches(date, generation, requestId)) return false
+        return try {
+            val response = client.get(url(settings, "/v1/plans/$date")) { authenticatedHeaders(settings) }
+            if (!response.status.isSuccess()) throw RemoteFailure("계획을 불러오지 못했어요.")
+            val day = response.body<DayPlan>()
+            if (!planRequestMatches(date, generation, requestId) || day.date != date) return false
+            val currentDay = _state.value.planning.day?.takeIf { it.date == date }
+            val accepted = if (currentDay != null && currentDay.revision > day.revision) currentDay else day
+            _state.update {
+                if (it.planning.date != date) it else it.copy(
+                    planning = it.planning.copy(day = accepted, loading = false, saving = false, error = null),
+                )
+            }
+            val marker = _state.value.snapshot?.planRevision
+            when {
+                marker == null || marker <= accepted.revision -> planFollowUpRevision = null
+                marker != planFollowUpRevision && planRequestMatches(date, generation, requestId) -> {
+                    planFollowUpRevision = marker
+                    planJob = null
+                    requestPlan(date, generation, force = true)
+                }
+            }
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Throwable) {
+            if (planRequestMatches(date, generation, requestId)) {
+                _state.update {
+                    if (it.planning.date != date) it else it.copy(
+                        planning = it.planning.copy(
+                            loading = false,
+                            saving = false,
+                            error = if (saving) "계획은 저장됐지만 최신 내용을 불러오지 못했어요." else "계획을 불러오지 못했어요. 다시 시도해 주세요.",
+                        ),
+                    )
+                }
+            }
+            false
+        }
+    }
+
+    private fun planRequestMatches(date: String, generation: Long, requestId: String): Boolean =
+        generation == identityGeneration && planRequestId == requestId && _state.value.planning.date == date
+
+    private fun setPlanningError(message: String) {
+        _state.update { it.copy(planning = it.planning.copy(loading = false, saving = false, error = message)) }
+    }
+
     /** 어느 수신 통로든 revision과 서버 시각이 현재 상태보다 역행하는 Snapshot은 거부한다. */
     private suspend fun applySnapshot(snapshot: Snapshot, generation: Long): Boolean = snapshotMutex.withLock {
         if (generation != identityGeneration) return@withLock false
@@ -496,8 +728,19 @@ class StintController(
         serverOffsetMs = snapshot.serverNowEpochMs - receivedAt
         lastSuccessAtMs = receivedAt
         runCatching { localStore.saveSnapshot(snapshot) }
+        val wasConnected = _state.value.connection == ConnectionStatus.CONNECTED
         _state.update {
             it.copy(snapshot = snapshot, serverNowEpochMs = snapshot.serverNowEpochMs, connection = ConnectionStatus.CONNECTED)
+        }
+        val planning = _state.value.planning
+        val date = planning.date
+        val planChanged = snapshot.planRevision?.let { marker ->
+            planning.day?.revision?.let { marker > it } ?: true
+        } == true
+        if (date != null && !planning.loading && !planning.saving &&
+            (planning.day == null || planChanged || (!wasConnected && planning.error != null))
+        ) {
+            requestPlan(date, generation, force = true)
         }
         true
     }
@@ -563,6 +806,9 @@ private fun String.isLoopbackIpv4(): Boolean {
     if (octets.size != 4 || octets.any { it !in 0..255 }) return false
     return octets[0] == 127
 }
+
+private fun String.isCanonicalPlanDate(): Boolean =
+    length == 10 && runCatching { LocalDate.parse(this).toString() == this }.getOrDefault(false)
 
 private fun websocketUrl(baseUrl: String, path: String): String = when {
     baseUrl.startsWith("https://") -> "wss://${baseUrl.removePrefix("https://")}$path"

@@ -10,6 +10,8 @@ import dev.stint.shared.ClientState
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.ConnectionStatus
 import dev.stint.shared.FocusSession
+import dev.stint.shared.HourPlan
+import dev.stint.shared.PlanCycle
 import dev.stint.shared.Snapshot
 import dev.stint.shared.Subject
 import dev.stint.shared.TimerClockStyle
@@ -65,6 +67,9 @@ private class FakePopoverController(active: Boolean) : ClientController {
     override fun setSubjectFocusDuration(subjectId: String, targetSeconds: Int, expectedRevision: Long) = Unit
     override fun saveSubject(subject: Subject) = Unit
     override fun saveMemo(sessionId: String, memo: String) = Unit
+    override fun selectPlanDate(date: String?) = Unit
+    override fun saveHourPlan(date: String, hour: Int, plan: HourPlan?, expectedPlanRevision: Long) = Unit
+    override fun savePlanDefault(cycle: PlanCycle, expectedPlanRevision: Long) = Unit
     override fun refresh() = Unit
     override fun dismissMessage() = Unit
     override fun setClockStyle(style: TimerClockStyle) = Unit

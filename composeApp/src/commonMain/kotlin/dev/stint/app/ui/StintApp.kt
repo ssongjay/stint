@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
@@ -54,6 +55,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -67,7 +70,7 @@ import dev.stint.shared.TimerStatus
 import kotlinx.coroutines.delay
 import kotlin.time.TimeSource
 
-private enum class MainTab { FOCUS, RECORDS }
+private enum class MainTab { FOCUS, PLAN, RECORDS }
 internal enum class SidePanel { NONE, SUBJECT, TIME, CONNECTION }
 
 /**
@@ -160,7 +163,10 @@ private fun Workbench(
             WorkbenchHeader(
                 tab = tab,
                 state = state,
-                onTab = { tabName = it.name },
+                onTab = {
+                    tabName = it.name
+                    panelName = SidePanel.NONE.name
+                },
                 onRefresh = controller::refresh,
                 onConnection = {
                     panelName = (if (panel == SidePanel.CONNECTION) SidePanel.NONE else SidePanel.CONNECTION).name
@@ -224,6 +230,13 @@ private fun Workbench(
                     foldPosture = foldPosture,
                 )
 
+                tab == MainTab.PLAN -> PlanTab(
+                    controller = controller,
+                    state = state,
+                    nowEpochMs = tickNow,
+                    foldPosture = foldPosture,
+                )
+
                 else -> RecordsTab(
                     controller = controller,
                     state = state,
@@ -276,11 +289,17 @@ private fun WorkbenchHeader(
             }
             Spacer(Modifier.width(if (compact) 6.dp else 32.dp))
             HeaderTab("집중", tab == MainTab.FOCUS, compact) { onTab(MainTab.FOCUS) }
+            HeaderTab("계획", tab == MainTab.PLAN, compact) { onTab(MainTab.PLAN) }
             HeaderTab("기록", tab == MainTab.RECORDS, compact) { onTab(MainTab.RECORDS) }
             Spacer(Modifier.weight(1f))
             ConnectionBadge(state.connection, state.snapshot?.timer?.controllingDeviceName, compact, onConnection)
-            TextButton(onClick = onRefresh, enabled = !state.working) {
-                Text(if (compact) "새로" else "새로고침", style = MaterialTheme.typography.labelMedium)
+            TextButton(
+                onClick = onRefresh,
+                enabled = !state.working,
+                modifier = if (compact) Modifier.width(46.dp).semantics { contentDescription = "새로고침" } else Modifier,
+                contentPadding = if (compact) PaddingValues(0.dp) else ButtonDefaults.TextButtonContentPadding,
+            ) {
+                Text(if (compact) "↻" else "새로고침", style = if (compact) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium)
             }
         }
     }
@@ -290,7 +309,7 @@ private fun WorkbenchHeader(
 private fun HeaderTab(label: String, selected: Boolean, compact: Boolean, onClick: () -> Unit) {
     Box(
         Modifier
-            .width(if (compact) 64.dp else 84.dp)
+            .width(if (compact) 48.dp else 84.dp)
             .height(if (compact) 64.dp else 72.dp)
             .selectable(selected = selected, role = Role.Tab, onClick = onClick)
             .padding(horizontal = if (compact) 9.dp else 14.dp),
@@ -319,7 +338,7 @@ private fun ConnectionBadge(status: ConnectionStatus, deviceName: String?, compa
             .heightIn(min = 48.dp)
             .clip(RoundedCornerShape(50))
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = if (compact) 8.dp else 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Canvas(Modifier.size(8.dp)) { drawCircle(color) }

@@ -3,7 +3,11 @@ package dev.stint.app.client
 import dev.stint.shared.ApiError
 import dev.stint.shared.ConnectionSettings
 import dev.stint.shared.ConnectionStatus
+import dev.stint.shared.DayPlan
+import dev.stint.shared.HourPlan
 import dev.stint.shared.LocalStore
+import dev.stint.shared.PlanCycle
+import dev.stint.shared.SaveHourPlanRequest
 import dev.stint.shared.SaveSubjectRequest
 import dev.stint.shared.Snapshot
 import dev.stint.shared.Subject
@@ -798,6 +802,258 @@ class StintControllerTest {
         }
     }
 
+    @Test
+    fun `selected day loads and a saved hour is acknowledged from the server`() = runBlocking {
+        val date = "2026-11-26"
+        val initial = snapshot(serverNow = 1_000L, revision = 1).copy(planRevision = 1)
+        val first = DayPlan(date, 1, PlanCycle.FIFTEEN_FIVE, emptyList())
+        val hour = HourPlan(14, "자료 조사", PlanCycle.TWENTY_FIVE_FIVE)
+        val saved = DayPlan(date, 2, PlanCycle.FIFTEEN_FIVE, listOf(hour))
+        val acknowledged = initial.copy(revision = 2, planRevision = 2)
+        var currentDay = first
+        var currentSnapshot = initial
+        var request: SaveHourPlanRequest? = null
+        val controller = StintController(
+            client = client { call ->
+                when {
+                    call.url.encodedPath.endsWith("/v1/snapshot") -> jsonResponse(currentSnapshot)
+                    call.url.encodedPath.endsWith("/v1/plans/$date/hours/14") -> {
+                        request = json.decodeFromString<SaveHourPlanRequest>(call.body.text())
+                        currentDay = saved
+                        currentSnapshot = acknowledged
+                        jsonResponse(acknowledged)
+                    }
+                    call.url.encodedPath.endsWith("/v1/plans/$date") -> jsonResponse(currentDay)
+                    else -> error("Unexpected request ${call.url.encodedPath}")
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "plan-command" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.selectPlanDate(date)
+            withTimeout(2_000) { controller.state.first { it.planning.day == first && !it.planning.loading } }
+
+            controller.saveHourPlan(date, hour.hour, hour, expectedPlanRevision = first.revision)
+            val state = withTimeout(2_000) { controller.state.first { it.planning.day == saved && !it.planning.saving } }
+
+            assertEquals(1L, request?.expectedPlanRevision)
+            assertEquals(1L, request?.context?.expectedRevision)
+            assertEquals(hour, request?.plan)
+            assertEquals(2L, state.snapshot?.planRevision)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `late plan response from a previous date cannot replace the selected day`() = runBlocking {
+        val initial = snapshot(serverNow = 1_000L, revision = 1).copy(planRevision = 1)
+        val firstDate = "2026-11-26"
+        val secondDate = "2026-11-27"
+        val firstStarted = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val second = DayPlan(secondDate, 1, PlanCycle.FIFTEEN_FIVE, emptyList())
+        val controller = StintController(
+            client = client { call ->
+                when {
+                    call.url.encodedPath.endsWith("/v1/snapshot") -> jsonResponse(initial)
+                    call.url.encodedPath.endsWith("/v1/plans/$firstDate") -> {
+                        firstStarted.complete(Unit)
+                        releaseFirst.await()
+                        jsonResponse(DayPlan(firstDate, 1, PlanCycle.FIFTEEN_FIVE, emptyList()))
+                    }
+                    call.url.encodedPath.endsWith("/v1/plans/$secondDate") -> jsonResponse(second)
+                    else -> error("Unexpected request ${call.url.encodedPath}")
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "date-request" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.selectPlanDate(firstDate)
+            withTimeout(2_000) { firstStarted.await() }
+            controller.selectPlanDate(secondDate)
+            withTimeout(2_000) { controller.state.first { it.planning.day == second } }
+            releaseFirst.complete(Unit)
+            delay(50)
+
+            assertEquals(secondDate, controller.state.value.planning.date)
+            assertEquals(second, controller.state.value.planning.day)
+        } finally {
+            releaseFirst.complete(Unit)
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `plan conflict refreshes the day without replaying the mutation`() = runBlocking {
+        val date = "2026-11-26"
+        val initial = snapshot(serverNow = 1_000L, revision = 3).copy(planRevision = 4)
+        val original = DayPlan(date, 4, PlanCycle.FIFTEEN_FIVE, emptyList())
+        val latestHour = HourPlan(9, "다른 기기의 계획", PlanCycle.FIFTEEN_FIVE)
+        val latestDay = DayPlan(date, 5, PlanCycle.FIFTEEN_FIVE, listOf(latestHour))
+        val latestSnapshot = initial.copy(revision = 4, planRevision = 5)
+        var mutationCount = 0
+        var day = original
+        val controller = StintController(
+            client = client { call ->
+                when {
+                    call.url.encodedPath.endsWith("/v1/snapshot") -> jsonResponse(initial)
+                    call.url.encodedPath.endsWith("/hours/9") -> {
+                        mutationCount++
+                        day = latestDay
+                        jsonResponse(ApiError("revision_conflict", "changed", latestSnapshot), HttpStatusCode.Conflict)
+                    }
+                    call.url.encodedPath.endsWith("/v1/plans/$date") -> jsonResponse(day)
+                    else -> error("Unexpected request ${call.url.encodedPath}")
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "conflicting-plan" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.selectPlanDate(date)
+            withTimeout(2_000) { controller.state.first { it.planning.day == original } }
+
+            controller.saveHourPlan(date, 9, HourPlan(9, "내 계획", PlanCycle.FIFTEEN_FIVE), original.revision)
+            val state = withTimeout(2_000) { controller.state.first { it.planning.day == latestDay } }
+
+            assertEquals(1, mutationCount)
+            assertEquals(latestSnapshot, state.snapshot)
+            assertTrue(state.message.orEmpty().contains("다른 기기"))
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `failed plan load can be retried without discarding another loaded day`() = runBlocking {
+        val date = "2026-11-26"
+        val initial = snapshot(serverNow = 1_000L, revision = 1).copy(planRevision = 1)
+        val day = DayPlan(date, 1, PlanCycle.FIFTEEN_FIVE, emptyList())
+        var attempts = 0
+        val controller = StintController(
+            client = client { call ->
+                when {
+                    call.url.encodedPath.endsWith("/v1/snapshot") -> jsonResponse(initial)
+                    call.url.encodedPath.endsWith("/v1/plans/$date") -> {
+                        attempts++
+                        if (attempts == 1) respond("unavailable", HttpStatusCode.ServiceUnavailable)
+                        else jsonResponse(day)
+                    }
+                    else -> error("Unexpected request ${call.url.encodedPath}")
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "retry-plan" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.selectPlanDate(date)
+            withTimeout(2_000) { controller.state.first { it.planning.error != null } }
+            controller.selectPlanDate(date)
+            withTimeout(2_000) { controller.state.first { it.planning.day == day } }
+
+            assertEquals(2, attempts)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `plan read follows a newer snapshot marker before becoming current`() = runBlocking {
+        val date = "2026-11-26"
+        val snapshot = snapshot(serverNow = 1_000L, revision = 3).copy(planRevision = 3)
+        val stale = DayPlan(date, 2, PlanCycle.FIFTEEN_FIVE, emptyList())
+        val current = DayPlan(date, 3, PlanCycle.TWENTY_FIVE_FIVE, emptyList())
+        var reads = 0
+        val controller = StintController(
+            client = client { call ->
+                when {
+                    call.url.encodedPath.endsWith("/v1/snapshot") -> jsonResponse(snapshot)
+                    call.url.encodedPath.endsWith("/v1/plans/$date") -> {
+                        reads++
+                        jsonResponse(if (reads == 1) stale else current)
+                    }
+                    else -> error("Unexpected request ${call.url.encodedPath}")
+                }
+            },
+            localStore = FakeStore(settings(), snapshot),
+            clock = { 1_000L },
+            newId = { "marker-$reads" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.selectPlanDate(date)
+            withTimeout(2_000) { controller.state.first { it.planning.day == current && !it.planning.loading } }
+
+            assertEquals(2, reads)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun `saving an old date cannot replace a newly selected day`() = runBlocking {
+        val firstDate = "2026-11-26"
+        val secondDate = "2026-11-27"
+        val initial = snapshot(serverNow = 1_000L, revision = 1).copy(planRevision = 1)
+        val first = DayPlan(firstDate, 1, PlanCycle.FIFTEEN_FIVE, emptyList())
+        val second = DayPlan(secondDate, 1, PlanCycle.TWENTY_FIVE_FIVE, emptyList())
+        val saveStarted = CompletableDeferred<Unit>()
+        val releaseSave = CompletableDeferred<Unit>()
+        val controller = StintController(
+            client = client { call ->
+                when {
+                    call.url.encodedPath.endsWith("/v1/snapshot") -> jsonResponse(initial)
+                    call.url.encodedPath.endsWith("/v1/plans/$firstDate/hours/8") -> {
+                        saveStarted.complete(Unit)
+                        releaseSave.await()
+                        jsonResponse(initial.copy(revision = 2, planRevision = 2))
+                    }
+                    call.url.encodedPath.endsWith("/v1/plans/$firstDate") -> jsonResponse(first)
+                    call.url.encodedPath.endsWith("/v1/plans/$secondDate") -> jsonResponse(second)
+                    else -> error("Unexpected request ${call.url.encodedPath}")
+                }
+            },
+            localStore = FakeStore(settings(), initial),
+            clock = { 1_000L },
+            newId = { "save-date" },
+            realtimeEnabled = false,
+        )
+        try {
+            withTimeout(2_000) { controller.state.first { it.connection == ConnectionStatus.CONNECTED } }
+            controller.selectPlanDate(firstDate)
+            withTimeout(2_000) { controller.state.first { it.planning.day == first } }
+            controller.saveHourPlan(firstDate, 8, HourPlan(8, "전공 공부", PlanCycle.FIFTEEN_FIVE), first.revision)
+            withTimeout(2_000) { saveStarted.await() }
+
+            controller.selectPlanDate(secondDate)
+            withTimeout(2_000) { controller.state.first { it.planning.day == second } }
+            releaseSave.complete(Unit)
+            delay(50)
+
+            assertEquals(secondDate, controller.state.value.planning.date)
+            assertEquals(second, controller.state.value.planning.day)
+        } finally {
+            releaseSave.complete(Unit)
+            controller.close()
+        }
+    }
+
     private fun client(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): HttpClient =
         HttpClient(MockEngine(handler)) {
             expectSuccess = false
@@ -830,6 +1086,12 @@ class StintControllerTest {
         status = status,
         headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
     )
+
+    private fun OutgoingContent.text(): String = when (this) {
+        is TextContent -> text
+        is OutgoingContent.ByteArrayContent -> bytes().decodeToString()
+        else -> toString()
+    }
 
     private class TestTimeout : Exception("timeout")
 
