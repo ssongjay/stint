@@ -7,8 +7,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -118,7 +118,7 @@ internal fun PlanningDial(
         }
     }
 
-    BoxWithConstraints(modifier.aspectRatio(1f)) {
+    BoxWithConstraints(modifier) {
         val diameter = minOf(maxWidth, maxHeight)
         val textMeasurer = rememberTextMeasurer()
         val tickStyle = TextStyle(
@@ -138,7 +138,7 @@ internal fun PlanningDial(
         var downPosition: Offset? = null
         var downIndex: Int? = null
 
-        Box(Modifier.width(diameter).aspectRatio(1f).align(Alignment.Center)) {
+        Box(Modifier.size(diameter).align(Alignment.Center)) {
             Canvas(
                 Modifier
                     .fillMaxSize()
