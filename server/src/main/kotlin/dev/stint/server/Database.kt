@@ -86,6 +86,9 @@ class Database(private val config: ServerConfig) : AutoCloseable {
     private fun seed(connection: Connection) {
         connection.prepareStatement("INSERT IGNORE INTO app_state(id, revision) VALUES (1, 0)").use { it.executeUpdate() }
         connection.prepareStatement(
+            "INSERT IGNORE INTO plan_state(id, revision, default_cycle) VALUES (1, 0, 'FIFTEEN_FIVE')",
+        ).use { it.executeUpdate() }
+        connection.prepareStatement(
             """
             INSERT IGNORE INTO timer_state(
               id, status, phase, mode, target_seconds, accumulated_millis, completed_focus_count
@@ -232,6 +235,24 @@ class Database(private val config: ServerConfig) : AutoCloseable {
           last_used_revision BIGINT NOT NULL,
           last_used_at_ms BIGINT NOT NULL,
           INDEX idx_recent_memos_order(last_used_revision, last_used_at_ms)
+        ) ENGINE=InnoDB
+        """.trimIndent(),
+        """
+        CREATE TABLE IF NOT EXISTS plan_state (
+          id TINYINT PRIMARY KEY,
+          revision BIGINT NOT NULL,
+          default_cycle VARCHAR(32) NOT NULL
+        ) ENGINE=InnoDB
+        """.trimIndent(),
+        """
+        CREATE TABLE IF NOT EXISTS hour_plans (
+          plan_date CHAR(10) NOT NULL,
+          plan_hour TINYINT NOT NULL,
+          title VARCHAR(40) NOT NULL,
+          cycle VARCHAR(32) NOT NULL,
+          study_minutes VARCHAR(64) NOT NULL,
+          updated_at_ms BIGINT NOT NULL,
+          PRIMARY KEY(plan_date, plan_hour)
         ) ENGINE=InnoDB
         """.trimIndent(),
     )

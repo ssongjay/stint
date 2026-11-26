@@ -1,9 +1,14 @@
 package dev.stint.server
 
 import dev.stint.shared.DeviceInfo
+import dev.stint.shared.DayPlan
 import dev.stint.shared.FocusSession
+import dev.stint.shared.HourPlan
 import dev.stint.shared.MutationContext
+import dev.stint.shared.PlanCycle
+import dev.stint.shared.SaveHourPlanRequest
 import dev.stint.shared.SaveMemoRequest
+import dev.stint.shared.SavePlanDefaultRequest
 import dev.stint.shared.SaveSubjectRequest
 import dev.stint.shared.Snapshot
 import dev.stint.shared.Subject
@@ -15,6 +20,9 @@ import dev.stint.shared.TimerState
 import dev.stint.shared.TimerStatus
 import java.sql.Connection
 import java.sql.ResultSet
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 import java.util.UUID
 
 class ValidationException(message: String) : RuntimeException(message)
@@ -42,6 +50,22 @@ class StintRepository(
             result
         } catch (error: Exception) {
             connection.rollbackAndRethrow(error)
+        }
+    }
+
+    fun dayPlan(date: String): DayPlan {
+        validatePlanDate(date)
+        return database.connection().use { connection ->
+            connection.transactionIsolation = Connection.TRANSACTION_REPEATABLE_READ
+            connection.isReadOnly = true
+            connection.autoCommit = false
+            try {
+                val result = readDayPlan(connection, date)
+                connection.commit()
+                result
+            } catch (error: Exception) {
+                connection.rollbackAndRethrow(error)
+            }
         }
     }
 
@@ -172,6 +196,50 @@ class StintRepository(
         if (normalizedMemo.isNotEmpty()) rememberMemo(connection, normalizedMemo, nextRevision, now)
     }
 
+    fun saveHourPlan(date: String, hour: Int, request: SaveHourPlanRequest): MutationResult {
+        validatePlanDate(date)
+        if (hour !in 0..23) throw ValidationException("Hour must be between 0 and 23")
+        return mutate(request.context, request.expectedPlanRevision) { connection, now, _ ->
+            val normalized = request.plan?.let { plan ->
+                if (plan.hour != hour) throw ValidationException("Plan hour must match the path hour")
+                validateHourPlan(plan)
+            }
+            if (normalized == null) {
+                connection.prepareStatement("DELETE FROM hour_plans WHERE plan_date = ? AND plan_hour = ?").use { statement ->
+                    statement.setString(1, date)
+                    statement.setInt(2, hour)
+                    statement.executeUpdate()
+                }
+            } else {
+                connection.prepareStatement(
+                    """
+                    INSERT INTO hour_plans(plan_date, plan_hour, title, cycle, study_minutes, updated_at_ms)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                      title=VALUES(title), cycle=VALUES(cycle), study_minutes=VALUES(study_minutes),
+                      updated_at_ms=VALUES(updated_at_ms)
+                    """.trimIndent(),
+                ).use { statement ->
+                    statement.setString(1, date)
+                    statement.setInt(2, hour)
+                    statement.setString(3, normalized.title)
+                    statement.setString(4, normalized.cycle.name)
+                    statement.setString(5, normalized.studyMinutes.joinToString(","))
+                    statement.setLong(6, now)
+                    statement.executeUpdate()
+                }
+            }
+        }
+    }
+
+    fun savePlanDefault(request: SavePlanDefaultRequest): MutationResult =
+        mutate(request.context, request.expectedPlanRevision) { connection, _, _ ->
+            connection.prepareStatement("UPDATE plan_state SET default_cycle = ? WHERE id = 1").use { statement ->
+                statement.setString(1, request.cycle.name)
+                statement.executeUpdate()
+            }
+        }
+
     fun settleExpired(): MutationResult? = database.connection().use { connection ->
         connection.autoCommit = false
         try {
@@ -195,8 +263,15 @@ class StintRepository(
      * 같은 commandId는 재실행하지 않고, 최신 revision을 본 요청만 변경한다.
      * 도메인 변경과 receipt 저장을 같은 커밋에 넣어 응답 유실 후 재시도도 안전하게 만든다.
      */
-    private fun mutate(context: MutationContext, change: (Connection, Long, Long) -> Unit): MutationResult {
+    private fun mutate(
+        context: MutationContext,
+        expectedPlanRevision: Long? = null,
+        change: (Connection, Long, Long) -> Unit,
+    ): MutationResult {
         validateContext(context)
+        if (expectedPlanRevision != null && expectedPlanRevision < 0) {
+            throw ValidationException("Invalid plan revision")
+        }
         return database.connection().use { connection ->
             connection.autoCommit = false
             try {
@@ -212,7 +287,13 @@ class StintRepository(
                 val settlement = settleLocked(connection, now)
                 val effectiveRevision = currentRevision + if (settlement == null) 0 else 1
                 if (settlement != null) setRevision(connection, effectiveRevision)
-                if (context.expectedRevision != effectiveRevision) {
+                val planRevision = expectedPlanRevision?.let { lockPlanRevision(connection) }
+                val revisionMatches = if (expectedPlanRevision == null) {
+                    context.expectedRevision == effectiveRevision
+                } else {
+                    expectedPlanRevision == planRevision
+                }
+                if (!revisionMatches) {
                     val latest = snapshot(connection, clock.nowEpochMs())
                     if (settlement == null) connection.rollback() else connection.commit()
                     throw RevisionConflictException(latest, stateChanged = settlement != null)
@@ -227,6 +308,7 @@ class StintRepository(
                     statement.setLong(2, now)
                     statement.executeUpdate()
                 }
+                if (planRevision != null) setPlanRevision(connection, planRevision + 1)
                 setRevision(connection, nextRevision)
                 val result = snapshot(connection, now)
                 connection.commit()
@@ -260,7 +342,51 @@ class StintRepository(
         sessions = readSessions(connection),
         devices = readDevices(connection, now),
         recentMemos = readRecentMemos(connection),
+        planRevision = readPlanRevision(connection),
     )
+
+    private fun readDayPlan(connection: Connection, date: String): DayPlan {
+        var revision = 0L
+        var defaultCycle = PlanCycle.FIFTEEN_FIVE
+        connection.createStatement().use { statement ->
+            statement.executeQuery("SELECT revision, default_cycle FROM plan_state WHERE id = 1").use { result ->
+                check(result.next()) { "plan_state is missing" }
+                revision = result.getLong("revision")
+                defaultCycle = PlanCycle.valueOf(result.getString("default_cycle"))
+            }
+        }
+        val hours = connection.prepareStatement(
+            """
+            SELECT plan_hour, title, cycle, study_minutes
+            FROM hour_plans WHERE plan_date = ? ORDER BY plan_hour
+            """.trimIndent(),
+        ).use { statement ->
+            statement.setString(1, date)
+            statement.executeQuery().use { result ->
+                buildList {
+                    while (result.next()) {
+                        val cycle = PlanCycle.valueOf(result.getString("cycle"))
+                        add(
+                            HourPlan(
+                                hour = result.getInt("plan_hour"),
+                                title = result.getString("title"),
+                                cycle = cycle,
+                                studyMinutes = parseStudyMinutes(result.getString("study_minutes"), cycle),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        return DayPlan(date, revision, defaultCycle, hours)
+    }
+
+    private fun readPlanRevision(connection: Connection): Long = connection.createStatement().use { statement ->
+        statement.executeQuery("SELECT revision FROM plan_state WHERE id = 1").use { result ->
+            check(result.next()) { "plan_state is missing" }
+            result.getLong(1)
+        }
+    }
 
     private fun readRecentMemos(connection: Connection): List<String> = connection.createStatement().use { statement ->
         statement.executeQuery(
@@ -457,10 +583,24 @@ class StintRepository(
         }
     }
 
+    private fun lockPlanRevision(connection: Connection): Long = connection.createStatement().use { statement ->
+        statement.executeQuery("SELECT revision FROM plan_state WHERE id=1 FOR UPDATE").use { result ->
+            check(result.next()) { "plan_state is missing" }
+            result.getLong(1)
+        }
+    }
+
     private fun setRevision(connection: Connection, revision: Long) {
         connection.prepareStatement("UPDATE app_state SET revision=? WHERE id=1").use { statement ->
             statement.setLong(1, revision)
             statement.executeUpdate()
+        }
+    }
+
+    private fun setPlanRevision(connection: Connection, revision: Long) {
+        connection.prepareStatement("UPDATE plan_state SET revision=? WHERE id=1").use { statement ->
+            statement.setLong(1, revision)
+            check(statement.executeUpdate() == 1) { "plan_state is missing" }
         }
     }
 
@@ -506,6 +646,40 @@ class StintRepository(
         if (subject.longBreakEvery !in 1..100) throw ValidationException("longBreakEvery must be between 1 and 100")
     }
 
+    private fun validatePlanDate(date: String) {
+        if (!PLAN_DATE.matches(date)) throw ValidationException("Date must use yyyy-MM-dd")
+        try {
+            val parsed = LocalDate.parse(date, DateTimeFormatter.ISO_LOCAL_DATE)
+            if (parsed.year !in 1..9999 || parsed.toString() != date) {
+                throw ValidationException("Date must use yyyy-MM-dd")
+            }
+        } catch (_: DateTimeParseException) {
+            throw ValidationException("Date must use yyyy-MM-dd")
+        }
+    }
+
+    private fun validateHourPlan(plan: HourPlan): HourPlan {
+        if (plan.hour !in 0..23) throw ValidationException("Hour must be between 0 and 23")
+        val title = plan.title.trim()
+        if (title.isEmpty() || title.length > 40) throw ValidationException("Title must be between 1 and 40 characters")
+        if (plan.studyMinutes.size != plan.cycle.repetitions ||
+            plan.studyMinutes.any { it !in 1 until plan.cycle.cycleMinutes }
+        ) {
+            throw ValidationException("Study minutes must keep every study and rest phase non-empty")
+        }
+        return plan.copy(title = title)
+    }
+
+    private fun parseStudyMinutes(value: String, cycle: PlanCycle): List<Int> {
+        val parsed = value.split(',').mapNotNull(String::toIntOrNull)
+        val candidate = HourPlan(0, "stored", cycle, parsed)
+        return try {
+            validateHourPlan(candidate).studyMinutes
+        } catch (_: ValidationException) {
+            cycle.defaultStudyMinutes()
+        }
+    }
+
     private fun validateDuration(seconds: Int, name: String) {
         if (seconds !in 1..14_400) throw ValidationException("$name must be between 1 and 14400")
     }
@@ -517,6 +691,10 @@ class StintRepository(
 
     private fun java.sql.PreparedStatement.setNullableLong(index: Int, value: Long?) {
         if (value == null) setNull(index, java.sql.Types.BIGINT) else setLong(index, value)
+    }
+
+    private companion object {
+        val PLAN_DATE = Regex("\\d{4}-\\d{2}-\\d{2}")
     }
 
 }

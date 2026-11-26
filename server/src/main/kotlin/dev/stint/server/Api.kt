@@ -1,7 +1,9 @@
 package dev.stint.server
 
 import dev.stint.shared.ApiError
+import dev.stint.shared.SaveHourPlanRequest
 import dev.stint.shared.SaveMemoRequest
+import dev.stint.shared.SavePlanDefaultRequest
 import dev.stint.shared.SaveSubjectRequest
 import dev.stint.shared.Snapshot
 import dev.stint.shared.TimerCommand
@@ -158,6 +160,38 @@ internal fun Application.stintModule(
                 val request = call.receive<SaveMemoRequest>()
                 call.requireMatchingDevice(request.context.deviceId, request.context.deviceName) ?: return@put
                 val result = withContext(Dispatchers.IO) { repository.saveMemo(id, request) }
+                if (result.changed) events.publish(result.snapshot)
+                call.respond(result.snapshot)
+            }
+
+            get("/plans/{date}") {
+                if (!call.hasValidToken(config.authToken)) return@get
+                val device = call.requireDevice() ?: return@get
+                val date = call.parameters["date"] ?: throw ValidationException("Date is required")
+                val plan = withContext(Dispatchers.IO) {
+                    repository.touchDevice(device.first, device.second)
+                    repository.dayPlan(date)
+                }
+                call.respond(plan)
+            }
+
+            put("/plans/{date}/hours/{hour}") {
+                if (!call.hasValidToken(config.authToken)) return@put
+                val date = call.parameters["date"] ?: throw ValidationException("Date is required")
+                val hour = call.parameters["hour"]?.toIntOrNull()
+                    ?: throw ValidationException("Hour is required")
+                val request = call.receive<SaveHourPlanRequest>()
+                call.requireMatchingDevice(request.context.deviceId, request.context.deviceName) ?: return@put
+                val result = withContext(Dispatchers.IO) { repository.saveHourPlan(date, hour, request) }
+                if (result.changed) events.publish(result.snapshot)
+                call.respond(result.snapshot)
+            }
+
+            put("/plans/default") {
+                if (!call.hasValidToken(config.authToken)) return@put
+                val request = call.receive<SavePlanDefaultRequest>()
+                call.requireMatchingDevice(request.context.deviceId, request.context.deviceName) ?: return@put
+                val result = withContext(Dispatchers.IO) { repository.savePlanDefault(request) }
                 if (result.changed) events.publish(result.snapshot)
                 call.respond(result.snapshot)
             }

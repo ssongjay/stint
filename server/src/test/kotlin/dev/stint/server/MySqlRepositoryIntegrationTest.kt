@@ -1,6 +1,10 @@
 package dev.stint.server
 
 import dev.stint.shared.MutationContext
+import dev.stint.shared.HourPlan
+import dev.stint.shared.PlanCycle
+import dev.stint.shared.SaveHourPlanRequest
+import dev.stint.shared.SavePlanDefaultRequest
 import dev.stint.shared.SaveSubjectRequest
 import dev.stint.shared.SaveMemoRequest
 import dev.stint.shared.TimerAction
@@ -37,7 +41,10 @@ class MySqlRepositoryIntegrationTest {
         database.connection().use { connection ->
             connection.createStatement().use { statement ->
                 statement.execute("SET FOREIGN_KEY_CHECKS=0")
-                listOf("processed_commands", "recent_memos", "focus_sessions", "devices", "timer_state", "subjects", "app_state")
+                listOf(
+                    "processed_commands", "hour_plans", "recent_memos", "focus_sessions", "devices",
+                    "timer_state", "subjects", "plan_state", "app_state",
+                )
                     .forEach { statement.execute("TRUNCATE TABLE $it") }
                 statement.execute("SET FOREIGN_KEY_CHECKS=1")
             }
@@ -353,6 +360,174 @@ class MySqlRepositoryIntegrationTest {
         assertEquals(1, results.count { it.isSuccess })
         assertEquals(1, results.count { it.exceptionOrNull() is RevisionConflictException })
         assertTrue(repository.snapshot().timer.targetSeconds in setOf(120, 180))
+    }
+
+    @Test
+    fun `hour plans synchronize edits custom phases defaults and deletion`() {
+        val date = "2026-11-26"
+        val empty = repository.dayPlan(date)
+        assertEquals(0, empty.revision)
+        assertEquals(PlanCycle.FIFTEEN_FIVE, empty.defaultCycle)
+        assertTrue(empty.hours.isEmpty())
+
+        val first = repository.saveHourPlan(
+            date,
+            14,
+            SaveHourPlanRequest(
+                context("plan-save", "mac", 0),
+                empty.revision,
+                HourPlan(14, "  자료 조사  ", PlanCycle.FIFTEEN_FIVE, listOf(13, 15, 15)),
+            ),
+        )
+        assertTrue(first.changed)
+        assertEquals(1, first.snapshot.planRevision)
+        assertEquals(
+            HourPlan(14, "자료 조사", PlanCycle.FIFTEEN_FIVE, listOf(13, 15, 15)),
+            repository.dayPlan(date).hours.single(),
+        )
+
+        val configured = repository.savePlanDefault(
+            SavePlanDefaultRequest(context("default-long", "android", 0), 1, PlanCycle.TWENTY_FIVE_FIVE),
+        ).snapshot
+        assertEquals(2, configured.planRevision)
+        assertEquals(PlanCycle.TWENTY_FIVE_FIVE, repository.dayPlan("2026-11-27").defaultCycle)
+
+        val deleted = repository.saveHourPlan(
+            date,
+            14,
+            SaveHourPlanRequest(context("plan-delete", "android", 0), 2, null),
+        ).snapshot
+        assertEquals(3, deleted.planRevision)
+        assertTrue(repository.dayPlan(date).hours.isEmpty())
+    }
+
+    @Test
+    fun `plan revision protects two devices while timer revision changes independently`() {
+        val date = "2026-11-26"
+        val baseline = repository.dayPlan(date)
+        val timerStarted = repository.execute(start("timer-independent", "mac", repository.snapshot().revision)).snapshot
+
+        val saved = repository.saveHourPlan(
+            date,
+            8,
+            SaveHourPlanRequest(
+                context("plan-after-timer", "mac", baseline.revision),
+                baseline.revision,
+                HourPlan(8, "전공 공부", PlanCycle.FIFTEEN_FIVE),
+            ),
+        ).snapshot
+        assertTrue(saved.revision > timerStarted.revision)
+        assertEquals(1, saved.planRevision)
+
+        val conflict = assertFailsWith<RevisionConflictException> {
+            repository.saveHourPlan(
+                date,
+                9,
+                SaveHourPlanRequest(
+                    context("stale-device", "android", timerStarted.revision),
+                    baseline.revision,
+                    HourPlan(9, "오래된 수정", PlanCycle.TWENTY_FIVE_FIVE),
+                ),
+            )
+        }
+        assertEquals(saved.planRevision, conflict.latest.planRevision)
+        assertEquals(listOf(8), repository.dayPlan(date).hours.map(HourPlan::hour))
+
+        val replay = repository.saveHourPlan(
+            date,
+            8,
+            SaveHourPlanRequest(
+                context("plan-after-timer", "mac", baseline.revision),
+                baseline.revision,
+                // Duplicate receipts win before validating a changed replay payload.
+                HourPlan(9, "다른 재전송 내용", PlanCycle.TWENTY_FIVE_FIVE),
+            ),
+        )
+        assertFalse(replay.changed)
+        assertEquals(1, replay.snapshot.planRevision)
+        assertEquals("전공 공부", repository.dayPlan(date).hours.single().title)
+    }
+
+    @Test
+    fun `concurrent plan edits at one plan revision allow one winner`() {
+        val date = "2026-11-26"
+        val planRevision = repository.dayPlan(date).revision
+        val globalRevision = repository.snapshot().revision
+        val gate = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        val calls = listOf(8, 9).map { hour ->
+            executor.submit<Result<MutationResult>> {
+                gate.await()
+                runCatching {
+                    repository.saveHourPlan(
+                        date,
+                        hour,
+                        SaveHourPlanRequest(
+                            context("plan-concurrent-$hour", "device-$hour", globalRevision),
+                            planRevision,
+                            HourPlan(hour, "계획 $hour", PlanCycle.FIFTEEN_FIVE),
+                        ),
+                    )
+                }
+            }
+        }
+
+        gate.countDown()
+        val results = calls.map { it.get() }
+        executor.shutdown()
+
+        assertEquals(1, results.count { it.isSuccess })
+        assertEquals(1, results.count { it.exceptionOrNull() is RevisionConflictException })
+        assertEquals(1, repository.dayPlan(date).hours.size)
+    }
+
+    @Test
+    fun `invalid plan input rolls back without consuming revisions`() {
+        val snapshot = repository.snapshot()
+        val planRevision = repository.dayPlan("2026-11-26").revision
+        assertFailsWith<ValidationException> {
+            repository.saveHourPlan(
+                "2026-02-30",
+                8,
+                SaveHourPlanRequest(
+                    context("invalid-date", "mac", snapshot.revision),
+                    planRevision,
+                    HourPlan(8, "공부", PlanCycle.FIFTEEN_FIVE),
+                ),
+            )
+        }
+        assertFailsWith<ValidationException> {
+            repository.saveHourPlan(
+                "2026-11-26",
+                8,
+                SaveHourPlanRequest(
+                    context("invalid-phases", "mac", snapshot.revision),
+                    planRevision,
+                    HourPlan(8, "공부", PlanCycle.FIFTEEN_FIVE, listOf(20, 15, 15)),
+                ),
+            )
+        }
+        assertEquals(snapshot.revision, repository.snapshot().revision)
+        assertEquals(planRevision, repository.dayPlan("2026-11-26").revision)
+    }
+
+    @Test
+    fun `plan migration is additive and idempotent`() {
+        database.migrate()
+        database.migrate()
+        val tables = database.connection().use { connection ->
+            connection.prepareStatement(
+                """
+                SELECT table_name FROM information_schema.tables
+                WHERE table_schema = DATABASE() AND table_name IN ('plan_state', 'hour_plans')
+                """.trimIndent(),
+            ).use { statement ->
+                statement.executeQuery().use { result -> buildSet { while (result.next()) add(result.getString(1)) } }
+            }
+        }
+        assertEquals(setOf("plan_state", "hour_plans"), tables)
+        assertEquals(0, repository.dayPlan("0001-01-01").revision)
+        assertEquals(0, repository.dayPlan("9999-12-31").revision)
     }
 
     @Test

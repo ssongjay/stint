@@ -73,6 +73,7 @@ data class Snapshot(
     val sessions: List<FocusSession> = emptyList(),
     val devices: List<DeviceInfo> = emptyList(),
     val recentMemos: List<String> = emptyList(),
+    val planRevision: Long? = null,
 )
 
 /**

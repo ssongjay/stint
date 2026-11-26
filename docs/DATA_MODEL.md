@@ -12,6 +12,8 @@ server/src/main/kotlin/dev/stint/server/Database.kt다.
 | processed_commands | 이미 적용한 command id |
 | devices | 기기 이름과 최근 연결 시각 |
 | recent_memos | 최근 저장 회고의 SHA-256·본문·사용 revision. 중복 없이 최대 5개 |
+| plan_state | 계획 revision과 전 기기에 적용되는 기본 사이클 |
+| hour_plans | 날짜·시각으로 구분한 한 시간 제목, 사이클 유형과 각 회차의 공부 분 |
 
 ## 변경 처리
 
@@ -38,6 +40,21 @@ focus 타이머가 만료되면 정확한 deadline으로 기록을 한 번 만�
 accepted snapshot 저장은 같은 mutex에서 처리해 이전 서버 응답이 새 서버 캐시를
 오염시키지 못하게 한다. UTC epoch milliseconds를 보관하고 표시·날짜 집계는
 현재 기기의 현지 시간대를 사용한다.
+
+## 계획
+
+계획 날짜는 기기 현지 달력으로 선택한 `YYYY-MM-DD`이며, 같은 날짜를 선택한
+맥과 Android에서 같은 계획을 본다. 각 날짜의 0시부터 23시까지 한 시간에 계획
+하나를 저장한다. 기본 사이클은 공부 15분·휴식 5분을 3회 또는 공부 25분·휴식
+5분을 2회 반복한다. 회차별 공부 분만 저장하고 휴식은 회차의 전체 길이에서
+공부 분을 뺀 값이다. 기본 사이클 변경은 새 시간의 초기값에 적용한다.
+
+기존 스냅샷과 WebSocket에는 계획 revision을 싣는다. 계획 화면이 열린 기기는
+이 값이 올라가면 보고 있는 날짜의 계획을 다시 조회한다. 개별 날짜의 계획은
+`GET /v1/plans/{date}`로 읽고, 시간과 기본 사이클은 각각 `PUT /v1/plans/{date}/hours/{hour}`,
+`PUT /v1/plans/default`로 저장한다. 저장 요청은 읽을 때의 계획 revision과
+명령 ID를 보낸다. 먼저 저장한 변경이 있으면 충돌을 반환하고, 재전송된 명령은
+한 번만 적용한다. 기존 DB에는 계획 테이블을 추가한다.
 
 ## 비밀과 캐시
 
