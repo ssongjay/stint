@@ -162,6 +162,7 @@ class PlanningAcceptanceTest {
                 day.revision >= externallySaved.revision &&
                     day.hours.any { it.hour == selectedHour && it.title == EXTERNAL_TITLE }
             }
+            writePrivateWindowScreenshot(launched, "planning-external-live")
             assertHourButton(selectedHour, EXTERNAL_TITLE)
 
             clickExact("집중")
@@ -285,13 +286,17 @@ class PlanningAcceptanceTest {
     private fun assertHourButton(hour: Int, title: String) {
         if (hour >= 12) clickExact("오후")
         val expected = hourDescription(hour, title)
+        val hourPrefix = hourDescription(hour, "")
         val deadline = SystemClock.elapsedRealtime() + 10_000L
         var scrollAttempts = 0
         while (SystemClock.elapsedRealtime() < deadline) {
             val target = ownAccessibilityTree().firstOrNull { node ->
-                node.contentDescription?.toString() == expected
+                node.contentDescription?.toString()?.startsWith(hourPrefix) == true
             }
-            if (target?.isVisibleToUser == true) return
+            if (target != null) {
+                target.refresh()
+                if (target.contentDescription?.toString() == expected && target.isVisibleToUser) return
+            }
             if (scrollAttempts < MAX_SCROLL_ATTEMPTS && scrollPlanningDetailsForward(target)) {
                 scrollAttempts++
                 instrumentation.waitForIdleSync()
@@ -456,11 +461,25 @@ class PlanningAcceptanceTest {
     }
 
     private fun assertOwnText(text: String) {
-        waitUntil("Stint planning text '$text'") {
-            ownAccessibilityTree().any { node ->
+        val deadline = SystemClock.elapsedRealtime() + 10_000L
+        val settleBeforeScroll = SystemClock.elapsedRealtime() + UI_SETTLE_BEFORE_SCROLL_MILLIS
+        var scrollAttempts = 0
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val target = ownAccessibilityTree().firstOrNull { node ->
                 node.text?.toString() == text || node.contentDescription?.toString() == text
             }
+            if (target?.isVisibleToUser == true) return
+            if (SystemClock.elapsedRealtime() >= settleBeforeScroll &&
+                scrollAttempts < MAX_SCROLL_ATTEMPTS && scrollPlanningDetailsForward(target)
+            ) {
+                scrollAttempts++
+                instrumentation.waitForIdleSync()
+                SystemClock.sleep(250L)
+            } else {
+                SystemClock.sleep(100L)
+            }
         }
+        throw AssertionError("Timed out waiting for Stint planning text '$text'; ${visibleLabels()}")
     }
 
     private fun assertOwnAnyText(vararg values: String) {
