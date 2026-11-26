@@ -37,6 +37,7 @@ import io.ktor.http.ContentType
 import io.ktor.http.URLProtocol
 import io.ktor.http.Url
 import io.ktor.http.contentType
+import io.ktor.http.content.TextContent
 import io.ktor.http.encodeURLParameter
 import io.ktor.http.isSuccess
 import io.ktor.websocket.Frame
@@ -277,10 +278,12 @@ class StintController(
             return
         }
         launchPlanMutation(date, expectedPlanRevision) { settings, context ->
+            val request = SaveHourPlanRequest(context, expectedPlanRevision, plan)
             mutate(
                 settings,
                 "/v1/plans/$date/hours/$hour",
-                SaveHourPlanRequest(context, expectedPlanRevision, plan),
+                // Both platform clients omit null fields by default. Deletion requires an explicit null plan.
+                TextContent(json.encodeToString(SaveHourPlanRequest.serializer(), request), ContentType.Application.Json),
                 HttpMethod.PUT,
             )
         }

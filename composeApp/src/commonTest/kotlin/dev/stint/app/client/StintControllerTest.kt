@@ -803,25 +803,32 @@ class StintControllerTest {
     }
 
     @Test
-    fun `selected day loads and a saved hour is acknowledged from the server`() = runBlocking {
+    fun `selected day acknowledges a save and an explicit null deletion`() = runBlocking {
         val date = "2026-11-26"
         val initial = snapshot(serverNow = 1_000L, revision = 1).copy(planRevision = 1)
         val first = DayPlan(date, 1, PlanCycle.FIFTEEN_FIVE, emptyList())
         val hour = HourPlan(14, "자료 조사", PlanCycle.TWENTY_FIVE_FIVE)
         val saved = DayPlan(date, 2, PlanCycle.FIFTEEN_FIVE, listOf(hour))
         val acknowledged = initial.copy(revision = 2, planRevision = 2)
+        val deleted = first.copy(revision = 3)
+        val deletionAck = initial.copy(revision = 3, planRevision = 3)
         var currentDay = first
         var currentSnapshot = initial
         var request: SaveHourPlanRequest? = null
         val controller = StintController(
-            client = client { call ->
+            client = client(Json { ignoreUnknownKeys = true; explicitNulls = false }) { call ->
                 when {
                     call.url.encodedPath.endsWith("/v1/snapshot") -> jsonResponse(currentSnapshot)
                     call.url.encodedPath.endsWith("/v1/plans/$date/hours/14") -> {
                         request = json.decodeFromString<SaveHourPlanRequest>(call.body.text())
-                        currentDay = saved
-                        currentSnapshot = acknowledged
-                        jsonResponse(acknowledged)
+                        if (request?.plan == null) {
+                            currentDay = deleted
+                            currentSnapshot = deletionAck
+                        } else {
+                            currentDay = saved
+                            currentSnapshot = acknowledged
+                        }
+                        jsonResponse(currentSnapshot)
                     }
                     call.url.encodedPath.endsWith("/v1/plans/$date") -> jsonResponse(currentDay)
                     else -> error("Unexpected request ${call.url.encodedPath}")
@@ -844,6 +851,11 @@ class StintControllerTest {
             assertEquals(1L, request?.context?.expectedRevision)
             assertEquals(hour, request?.plan)
             assertEquals(2L, state.snapshot?.planRevision)
+
+            controller.saveHourPlan(date, hour.hour, null, expectedPlanRevision = saved.revision)
+            withTimeout(2_000) { controller.state.first { it.planning.day == deleted && !it.planning.saving } }
+            assertEquals(2L, request?.expectedPlanRevision)
+            assertNull(request?.plan)
         } finally {
             controller.close()
         }
@@ -1054,10 +1066,13 @@ class StintControllerTest {
         }
     }
 
-    private fun client(handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData): HttpClient =
+    private fun client(
+        codec: Json = json,
+        handler: suspend MockRequestHandleScope.(HttpRequestData) -> HttpResponseData,
+    ): HttpClient =
         HttpClient(MockEngine(handler)) {
             expectSuccess = false
-            install(ContentNegotiation) { json(json) }
+            install(ContentNegotiation) { json(codec) }
         }
 
     private fun settings(baseUrl: String = "https://stint.example") = ConnectionSettings(
